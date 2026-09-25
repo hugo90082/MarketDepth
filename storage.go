@@ -720,9 +720,13 @@ func (s *Store) Purge(id string) error {
 	return nil
 }
 
-func (s *Store) History(from, to int64, limit int, cursor int) ([]ChunkMeta, int) {
+func (s *Store) History(from, to int64, limit int, cursor int, expectedVersion int64) ([]ChunkMeta, int, int64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	version := s.index.UpdatedMs
+	if expectedVersion > 0 && expectedVersion != version {
+		return nil, -1, version, false
+	}
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -741,12 +745,14 @@ func (s *Store) History(from, to int64, limit int, cursor int) ([]ChunkMeta, int
 		}
 		out = append(out, c)
 	}
-	// Cursor is the absolute index inspected in the immutable history index, not
-	// cursor+returnedRows. This remains correct when from/to filters skip chunks.
+	// Cursor is the absolute index inspected in this exact history-index version.
+	// Clients that paginate should echo indexUpdatedTsMs as indexVersion on
+	// subsequent pages. If an append or purge changes the index, the request is
+	// rejected instead of silently skipping entries after an index shift.
 	if i >= len(s.index.Chunks) {
-		return out, -1
+		return out, -1, version, true
 	}
-	return out, i
+	return out, i, version, true
 }
 func (s *Store) Chunk(id string) (ChunkMeta, bool) {
 	s.mu.Lock()
