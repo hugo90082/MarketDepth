@@ -1,0 +1,235 @@
+openapi: 3.0.3
+info:
+  title: MarketDepth Production API
+  version: "1.1"
+  description: Historical + Recent Spot depth read API.
+servers:
+  - url: https://marketdepth-production.up.railway.app
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ErrorBody:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required: [code]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    ChunkMeta:
+      type: object
+      required: [kind, id, rel, shaRel, startTsMs, endTsMs, rows, bytes, sha256, schema]
+      properties:
+        kind: { type: string, example: spot }
+        id: { type: string, example: spot-1790347500000 }
+        rel: { type: string, example: chunks/spot/1790347500000.jsonl.gz }
+        shaRel: { type: string, example: chunks/spot/1790347500000.jsonl.gz.sha256 }
+        startTsMs: { type: integer, format: int64 }
+        endTsMs: { type: integer, format: int64 }
+        rows: { type: integer, example: 30 }
+        bytes: { type: integer, format: int64 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        schema: { type: string, example: MD-SPOT-30S-1 }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      security: []
+      summary: Process liveness and deployed schema/cadence
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, schema, spotSchema, spotCadenceMs, timezone, utcOffset]
+                properties:
+                  ok: { type: boolean, example: true }
+                  schema: { type: string, example: MARKET_DEPTH_COLLECTION_30S_5ZONE_1 }
+                  spotSchema: { type: string, example: MD-SPOT-30S-1 }
+                  spotCadenceMs: { type: integer, example: 30000 }
+                  timezone: { type: string, example: Asia/Taipei }
+                  utcOffset: { type: string, example: "+08:00" }
+
+  /api/v1/history/depth/index:
+    get:
+      summary: Paginated immutable Historical Spot chunk index
+      description: |
+        First page: omit indexVersion. Response meta.indexVersion and
+        meta.indexUpdatedTsMs are the same index version value.
+        For every subsequent page in the same pagination round, send the exact
+        first-page value as query parameter indexVersion.
+        If the index changes because of a newly sealed chunk or purge, the server
+        returns 409 INDEX_CHANGED. Discard the incomplete index listing and restart
+        from page 1. Already downloaded chunks whose SHA256 was verified may remain cached.
+
+        Legacy clients may omit indexVersion on all pages. They remain compatible,
+        but cross-page consistency is not guaranteed if the index changes mid-pagination.
+      parameters:
+        - in: query
+          name: from
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Optional lower time bound. Chunk is included when chunk.endTsMs > from.
+        - in: query
+          name: to
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Optional exclusive upper bound. Chunk is included when chunk.startTsMs < to.
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: integer, minimum: 0, default: 0 }
+          description: Absolute inspected index. Always use server nextCursor.
+        - in: query
+          name: indexVersion
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Omit on first page. On later pages send first-page meta.indexVersion unchanged.
+      responses:
+        "200":
+          description: Index page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data, nextCursor, meta]
+                properties:
+                  ok: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/ChunkMeta" }
+                  nextCursor:
+                    type: integer
+                    description: -1 means no next page.
+                    example: 100
+                  meta:
+                    type: object
+                    required: [schema, timezone, utcOffset, indexVersion, indexUpdatedTsMs]
+                    properties:
+                      schema: { type: string, example: MD-HISTORY-INDEX-1 }
+                      timezone: { type: string, example: Asia/Taipei }
+                      utcOffset: { type: string, example: "+08:00" }
+                      indexVersion:
+                        type: integer
+                        format: int64
+                        description: Index version to pin for the rest of this pagination round.
+                      indexUpdatedTsMs:
+                        type: integer
+                        format: int64
+                        description: Last index mutation timestamp; currently identical to indexVersion.
+        "400":
+          description: Invalid indexVersion
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+              example:
+                ok: false
+                error: { code: BAD_INDEX_VERSION }
+        "401":
+          description: Unauthorized
+        "409":
+          description: Index changed after first page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, error, meta]
+                properties:
+                  ok: { type: boolean, example: false }
+                  error:
+                    type: object
+                    required: [code, message]
+                    properties:
+                      code: { type: string, example: INDEX_CHANGED }
+                      message:
+                        type: string
+                        example: Historical index changed during pagination; restart from the first page
+                  meta:
+                    type: object
+                    required: [requestedIndexVersion, currentIndexVersion, indexUpdatedTsMs]
+                    properties:
+                      requestedIndexVersion: { type: integer, format: int64 }
+                      currentIndexVersion: { type: integer, format: int64 }
+                      indexUpdatedTsMs: { type: integer, format: int64 }
+        "429":
+          description: Global API rate limit
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Retry delay in seconds; currently 60.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  /api/v1/recent/depth:
+    get:
+      summary: Recent 16-minute Spot depth window
+      parameters:
+        - in: query
+          name: since
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Returns rows with row.t > since.
+      responses:
+        "200":
+          description: Recent rows. meta.dataAgeMs=max(0,serverNowMs-latestTargetTsMs); stale=dataAgeMs>60000.
+        "400":
+          description: BAD_SINCE
+        "401":
+          description: UNAUTHORIZED
+        "429":
+          description: POLL_TOO_FAST or RATE_LIMIT
+          headers:
+            Retry-After:
+              schema: { type: integer }
+        "503":
+          description: RECENT_UNAVAILABLE
+
+  /api/v1/history/depth/chunks/{chunkId}:
+    get:
+      summary: Download immutable gzip JSONL Spot chunk
+      parameters:
+        - in: path
+          name: chunkId
+          required: true
+          schema: { type: string }
+        - in: header
+          name: If-None-Match
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Raw gzip bytes; SHA256 in index is over these compressed bytes.
+          headers:
+            ETag:
+              schema: { type: string }
+            Content-Length:
+              schema: { type: integer }
+            Cache-Control:
+              schema: { type: string }
+          content:
+            application/gzip:
+              schema: { type: string, format: binary }
+        "304":
+          description: ETag matched; no response body.
+        "404":
+          description: Unknown chunk.
+        "429":
+          description: Global API rate limit.
+          headers:
+            Retry-After:
+              schema: { type: integer }
