@@ -87,9 +87,9 @@ func TestStoreHistoryChunk(t *testing.T) {
 	if err != nil || len(ms) != 1 {
 		t.Fatalf("flush %v %v", len(ms), err)
 	}
-	xs, next := s.History(0, 0, 100, 0)
-	if len(xs) != 1 || xs[0].Rows != 1 || next != -1 {
-		t.Fatalf("history %#v", xs)
+	xs, next, version, consistent := s.History(0, 0, 100, 0, 0)
+	if len(xs) != 1 || xs[0].Rows != 1 || next != -1 || version <= 0 || !consistent {
+		t.Fatalf("history %#v next=%d version=%d consistent=%v", xs, next, version, consistent)
 	}
 	if _, err = os.Stat(filepath.Join(cfg.DatasetDir, filepath.FromSlash(xs[0].Rel))); err != nil {
 		t.Fatal(err)
@@ -358,5 +358,43 @@ func TestOuterCoverageLossDoesNotBlankInnerZones(t *testing.T) {
 	}
 	if out[4][1] != nil {
 		t.Fatal("500-750 ask should be null because ask coverage stops before 750 bps")
+	}
+}
+
+
+func TestHistoryIndexVersionRejectsShift(t *testing.T) {
+	dir := t.TempDir()
+	cfg := LoadConfig()
+	cfg.DatasetDir = filepath.Join(dir, "ds")
+	cfg.ChunkDuration = time.Second
+	cfg.PackageDuration = 12 * time.Hour
+	s, err := NewStore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = s.Add("spot", 1000, SpotSnapshot{T: 1000, A: 1001}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.FlushClosed(2500); err != nil {
+		t.Fatal(err)
+	}
+	_, _, v1, ok := s.History(0, 0, 1, 0, 0)
+	if !ok || v1 <= 0 {
+		t.Fatalf("initial history version=%d ok=%v", v1, ok)
+	}
+
+	if err = s.Add("spot", 3000, SpotSnapshot{T: 3000, A: 3001}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.FlushClosed(4500); err != nil {
+		t.Fatal(err)
+	}
+	rows, next, v2, ok := s.History(0, 0, 1, 1, v1)
+	if ok {
+		t.Fatalf("stale index version must be rejected rows=%#v next=%d old=%d new=%d", rows, next, v1, v2)
+	}
+	if v2 == v1 {
+		t.Fatalf("index version must change after index mutation: %d", v2)
 	}
 }
