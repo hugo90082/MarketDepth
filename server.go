@@ -340,8 +340,15 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]any{
 				"ok": false,
-				"error": map[string]any{"code": "INDEX_CHANGED"},
-				"meta": map[string]any{"indexUpdatedTsMs": version},
+				"error": map[string]any{
+					"code": "INDEX_CHANGED",
+					"message": "Historical index changed during pagination; restart from the first page",
+				},
+				"meta": map[string]any{
+					"requestedIndexVersion": indexVersion,
+					"currentIndexVersion": version,
+					"indexUpdatedTsMs": version,
+				},
 			})
 			return
 		}
@@ -353,6 +360,7 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 				"schema": HistoryIndexSchema,
 				"timezone": "Asia/Taipei",
 				"utcOffset": "+08:00",
+				"indexVersion": version,
 				"indexUpdatedTsMs": version,
 			},
 		})
