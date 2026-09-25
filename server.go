@@ -139,7 +139,14 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 	}
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"ok":true}`)
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"schema": SchemaVersion,
+			"spotSchema": SpotSchema,
+			"spotCadenceMs": cfg.SpotCadence.Milliseconds(),
+			"timezone": "Asia/Taipei",
+			"utcOffset": "+08:00",
+		})
 	})
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
@@ -228,7 +235,9 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 				return
 			}
 			if !lim.Allow() {
-				w.WriteHeader(429)
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(http.StatusTooManyRequests)
 				io.WriteString(w, `{"ok":false,"error":{"code":"RATE_LIMIT"}}`)
 				return
 			}
@@ -307,16 +316,46 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 		to, _ := strconv.ParseInt(q.Get("to"), 10, 64)
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		cursor, _ := strconv.Atoi(q.Get("cursor"))
+		indexVersion := int64(0)
+		if raw := q.Get("indexVersion"); raw != "" {
+			n, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || n < 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				io.WriteString(w, `{"ok":false,"error":{"code":"BAD_INDEX_VERSION"}}`)
+				return
+			}
+			indexVersion = n
+		}
 		if limit <= 0 {
 			limit = 100
 		}
 		if limit > 500 {
 			limit = 500
 		}
-		chunks, next := store.History(from, to, limit, cursor)
+		chunks, next, version, consistent := store.History(from, to, limit, cursor, indexVersion)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "private, max-age=15")
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": chunks, "nextCursor": next, "meta": map[string]any{"schema": HistoryIndexSchema, "timezone": "Asia/Taipei", "utcOffset": "+08:00"}})
+		if !consistent {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]any{
+				"ok": false,
+				"error": map[string]any{"code": "INDEX_CHANGED"},
+				"meta": map[string]any{"indexUpdatedTsMs": version},
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"data": chunks,
+			"nextCursor": next,
+			"meta": map[string]any{
+				"schema": HistoryIndexSchema,
+				"timezone": "Asia/Taipei",
+				"utcOffset": "+08:00",
+				"indexUpdatedTsMs": version,
+			},
+		})
 	}))
 	mux.HandleFunc("/api/v1/history/depth/chunks/", authAPI(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/v1/history/depth/chunks/")
