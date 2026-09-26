@@ -21,7 +21,7 @@ func writeMeta(cfg Config) error {
 		"depthUnit": DepthUnit, "quoteToUSDPolicy": QuoteToUSDPolicy,
 		"spotAcquisition": "synchronized_30s_hybrid", "spotRequestLeadMs": spotRequestLead.Milliseconds(), "spotAcceptWindowMs": spotAcceptWindow.Milliseconds(),
 		"spotSources": map[string]string{"binance": "BTC/ETH local book: REST5000 bootstrap + diff-depth 1000ms + U/u bridge; exact-T cut; learned outer levels retained; SOL one REST5000 snapshot", "coinbase": "one full level2 REST snapshot per 30s row", "kraken": "exact WS depth=1000 plus BTC/ETH GroupedBook depth=1000 grouping=1000 filling only uncovered zone sides; REST500 failure fallback", "bitfinex": "P0 near + P2 broad REST snapshots per 30s row"},
-		"binanceCoveragePolicy": "BTC/ETH observed local-book coverage drives zone availability; learned outer levels are retained because hard pruning can destroy coverage evidence; bootstrap-trusted coverage is audited separately; SOL uses REST snapshot coverage",
+		"binanceCoveragePolicy": "BTC/ETH zone-side validity is gated only by the last complete REST5000 bootstrap trusted bid/ask edges; later diff-depth outer levels may update the book but cannot expand trusted coverage; SOL uses REST snapshot coverage",
 		"missingSemantics": "coverage is independent per venue/asset/zone/side; confirmed empty=0; insufficient coverage or source failure=null; no fill/interpolation",
 	}
 	b, _ := json.MarshalIndent(m, "", "  ")
