@@ -111,7 +111,7 @@ The token is intended to remain server-side behind the frontend BFF; do not expo
 
 The proven transport approach is retained while the decision cadence changes to 30 seconds:
 
-- Binance BTC/ETH: persistent local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut.
+- Binance BTC/ETH: persistent local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut. Zone-side validity is authorized only by the latest complete REST5000 bootstrap trusted bid/ask edges; later outer diff levels may update the book but never expand trusted coverage.
 - Binance SOL: REST5000 snapshot.
 - Coinbase: full Level-2 REST snapshot.
 - Kraken: exact WebSocket depth=1000; BTC/ETH also use GroupedBook only to fill uncovered sides/zones; REST fallback remains.
@@ -173,7 +173,7 @@ The USD-notional format is intentionally incompatible with the previous base-qua
 On the first startup with:
 
 ```text
-DatasetFormat = MARKET_DEPTH_USD_NOTIONAL_V1
+DatasetFormat = MARKET_DEPTH_USD_NOTIONAL_TRUSTED_COVERAGE_V2
 ```
 
 MarketDepth deletes the legacy dataset under `DATASET_DIR`, writes a format marker, and starts a clean dataset. Subsequent restarts with the same marker preserve the new data.
@@ -181,8 +181,22 @@ MarketDepth deletes the legacy dataset under `DATASET_DIR`, writes a format mark
 Current schemas:
 
 ```text
-MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_2
-MD-SPOT-30S-USD-2
-MD-HISTORY-INDEX-2
-MD-PACKAGE-2
+MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_3
+MD-SPOT-30S-USD-3
+MD-HISTORY-INDEX-3
+MD-PACKAGE-3
 ```
+
+
+## Binance trusted-coverage rule
+
+For Binance BTC/ETH, the local order book can contain price levels learned later from WebSocket diff-depth updates beyond the original REST5000 bootstrap range. Those isolated outer levels do **not** prove that every untouched price level in between was known.
+
+Therefore:
+
+```text
+zone validity = latest complete REST5000 bootstrap trusted edge coverage
+outer diff level = book update only, never new coverage evidence
+```
+
+Bid and Ask are evaluated independently. If a zone side exceeds the trusted bootstrap edge, that side is stored as `null`, even when farther observed diff levels exist.
