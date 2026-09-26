@@ -191,6 +191,70 @@ func TestSpotRESTAcceptWindow(t *testing.T) {
 	}
 }
 
+func TestDepthValuesAreUSDNotional(t *testing.T) {
+	bids := []Level{{99.5, 2}, {90, 1}}
+	asks := []Level{{100.5, 2}, {110, 1}}
+
+	rest := zonesFromLevels(bids, asks)
+	if rest[0][0] == nil || rest[0][1] == nil {
+		t.Fatalf("near zone missing: %#v", rest[0])
+	}
+	if math.Abs(*rest[0][0]-199.0) > 1e-9 || math.Abs(*rest[0][1]-201.0) > 1e-9 {
+		t.Fatalf("REST depth must be price*qty USD notional, got bid=%v ask=%v", *rest[0][0], *rest[0][1])
+	}
+
+	s := NewSource("x", "BTC", "BTCUSDT")
+	s.Enqueue(BookEvent{RecvMs: 1000, Role: "both", Kind: "replace", Bids: bids, Asks: asks})
+	book := s.SnapshotZones(1000, 45000)
+	if book[0][0] == nil || book[0][1] == nil {
+		t.Fatalf("book near zone missing: %#v", book[0])
+	}
+	if math.Abs(*book[0][0]-199.0) > 1e-9 || math.Abs(*book[0][1]-201.0) > 1e-9 {
+		t.Fatalf("local-book depth must be price*qty USD notional, got bid=%v ask=%v", *book[0][0], *book[0][1])
+	}
+}
+
+func TestLegacyDatasetIsResetOnceForUSDFormat(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ds")
+	if err := os.MkdirAll(filepath.Join(dir, "history"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(dir, "history", "legacy.txt")
+	if err := os.WriteFile(legacy, []byte("base-qty"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := LoadConfig()
+	cfg.DatasetDir = dir
+	cfg.ChunkDuration = time.Second
+	cfg.PackageDuration = 12 * time.Hour
+	if _, err := NewStore(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy dataset must be deleted on format migration: %v", err)
+	}
+	marker := filepath.Join(dir, ".marketdepth-format")
+	b, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != DatasetFormat+"\n" {
+		t.Fatalf("unexpected dataset marker %q", string(b))
+	}
+
+	keep := filepath.Join(dir, "meta", "keep.txt")
+	if err := os.WriteFile(keep, []byte("new-format"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("matching USD dataset must survive restart: %v", err)
+	}
+}
+
 func TestRESTZonesMatchBookZoneMath(t *testing.T) {
 	bids := []Level{{99.99, 1}, {99.8, 2}, {99.0, 3}, {95, 4}, {85, 5}, {79, 6}}
 	asks := []Level{{100.01, 1}, {100.2, 2}, {101, 3}, {105, 4}, {115, 5}, {121, 6}}
