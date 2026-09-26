@@ -1,3 +1,15 @@
+# IMPORTANT UNIT UPDATE
+
+All Spot depth values in the current Production contract are **USD notional**, not base-asset quantity.
+
+```text
+level USD notional = price × base quantity
+quote currency => treated as USD 1:1
+no FX conversion
+```
+
+Legacy base-quantity data is intentionally deleted during the one-time USD dataset migration.
+
 # Historical pagination v1.1 examples
 
 ## First page
@@ -26,7 +38,7 @@ Example response:
       "rows": 30,
       "bytes": 12345,
       "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      "schema": "MD-SPOT-30S-1"
+      "schema": "MD-SPOT-30S-USD-2"
     },
     {
       "kind": "spot",
@@ -38,12 +50,14 @@ Example response:
       "rows": 30,
       "bytes": 12411,
       "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-      "schema": "MD-SPOT-30S-1"
+      "schema": "MD-SPOT-30S-USD-2"
     }
   ],
   "nextCursor": 2,
   "meta": {
-    "schema": "MD-HISTORY-INDEX-1",
+    "schema": "MD-HISTORY-INDEX-2",
+    "depthUnit": "USD_NOTIONAL",
+    "quoteToUSDPolicy": "RAW_QUOTE_PRICE_ASSUMED_USD_1_TO_1_NO_FX",
     "timezone": "Asia/Taipei",
     "utcOffset": "+08:00",
     "indexVersion": 1790350000123,
@@ -92,12 +106,12 @@ Example success:
       "rows": 30,
       "bytes": 12480,
       "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
-      "schema": "MD-SPOT-30S-1"
+      "schema": "MD-SPOT-30S-USD-2"
     }
   ],
   "nextCursor": -1,
   "meta": {
-    "schema": "MD-HISTORY-INDEX-1",
+    "schema": "MD-HISTORY-INDEX-2",
     "timezone": "Asia/Taipei",
     "utcOffset": "+08:00",
     "indexVersion": 1790350000123,
