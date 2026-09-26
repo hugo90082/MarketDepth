@@ -40,7 +40,43 @@ type Store struct {
 	lastFlushMs int64
 }
 
+func ensureDatasetFormat(cfg Config) error {
+	dir := filepath.Clean(cfg.DatasetDir)
+	if dir == "" || dir == "." || dir == string(filepath.Separator) {
+		return fmt.Errorf("unsafe dataset dir: %q", cfg.DatasetDir)
+	}
+	marker := filepath.Join(dir, ".marketdepth-format")
+	if b, err := os.ReadFile(marker); err == nil {
+		if strings.TrimSpace(string(b)) == DatasetFormat {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil {
+			return readErr
+		}
+		if len(entries) > 0 {
+			log.Printf("dataset-format-reset dir=%s new=%s", dir, DatasetFormat)
+			if err := os.RemoveAll(dir); err != nil {
+				return err
+			}
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	return atomicWrite(marker, []byte(DatasetFormat+"\n"))
+}
+
 func NewStore(cfg Config) (*Store, error) {
+	if err := ensureDatasetFormat(cfg); err != nil {
+		return nil, err
+	}
 	for _, d := range []string{
 		filepath.Join(cfg.DatasetDir, "chunks", "spot"), filepath.Join(cfg.DatasetDir, "chunks", "futures"), filepath.Join(cfg.DatasetDir, "chunks", "events"), filepath.Join(cfg.DatasetDir, "chunks", "audit"),
 		filepath.Join(cfg.DatasetDir, "history"), filepath.Join(cfg.DatasetDir, "packages", "ready"), filepath.Join(cfg.DatasetDir, "packages", "tombstones"), filepath.Join(cfg.DatasetDir, "meta"), filepath.Join(cfg.DatasetDir, "recovery"),
@@ -280,7 +316,7 @@ func make3DInts(a, b, d int) [][][]int {
 }
 func (s *Store) writeSpotAudit(cb *chunkBuffer) (string, error) {
 	a := spotChunkAudit{
-		Schema: "MD-SPOT-AUDIT-1", StartMs: cb.startMs,
+		Schema: SpotAuditSchema, StartMs: cb.startMs,
 		EndMs: cb.startMs + s.cfg.ChunkDuration.Milliseconds(), Rows: len(cb.rows),
 		ValidBid: make3DInts(len(Venues), len(Assets), len(Zones)),
 		ValidAsk: make3DInts(len(Venues), len(Assets), len(Zones)),
