@@ -21,10 +21,18 @@ MarketDepth collects synchronized Spot depth snapshots from Binance, Coinbase, K
 Each Spot row uses:
 
 ```text
-d[venue][asset][zone] = [bidQty, askQty]
+d[venue][asset][zone] = [bidUSDNotional, askUSDNotional]
 ```
 
-Quantities are base-asset quantities, not USD notional.
+Values are **USD notional**.
+
+Each order-book level contributes:
+
+```text
+USD notional = price × base-asset quantity
+```
+
+No FX conversion is applied to the quote currency. Current USD/USDT markets, and any future quote currency used by this collector, are treated as USD 1:1 by policy.
 
 ## Missing-data semantics
 
@@ -48,7 +56,7 @@ Examples:
 
 Meaning:
 
-- `0` = coverage is confirmed for that whole zone/side and the actual summed quantity is zero.
+- `0` = coverage is confirmed for that whole zone/side and the actual summed USD notional is zero.
 - `null` = the collector cannot confirm complete coverage for that zone/side, or that source failed.
 - Bid and Ask validity are independent.
 - A source failure affects only that venue/asset. It does not blank other venues/assets.
@@ -156,3 +164,25 @@ go test ./...
 ```
 
 before producing the runtime binary.
+
+
+## USD-notional dataset migration
+
+The USD-notional format is intentionally incompatible with the previous base-quantity dataset.
+
+On the first startup with:
+
+```text
+DatasetFormat = MARKET_DEPTH_USD_NOTIONAL_V1
+```
+
+MarketDepth deletes the legacy dataset under `DATASET_DIR`, writes a format marker, and starts a clean dataset. Subsequent restarts with the same marker preserve the new data.
+
+Current schemas:
+
+```text
+MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_2
+MD-SPOT-30S-USD-2
+MD-HISTORY-INDEX-2
+MD-PACKAGE-2
+```
