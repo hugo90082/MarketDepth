@@ -40,7 +40,7 @@ components:
         rows: { type: integer, example: 30 }
         bytes: { type: integer, format: int64 }
         sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
-        schema: { type: string, example: MD-SPOT-30S-1 }
+        schema: { type: string, example: MD-SPOT-30S-USD-2 }
 
 security:
   - bearerAuth: []
@@ -57,12 +57,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [ok, schema, spotSchema, spotCadenceMs, timezone, utcOffset]
+                required: [ok, schema, spotSchema, spotCadenceMs, depthUnit, quoteToUSDPolicy, timezone, utcOffset]
                 properties:
                   ok: { type: boolean, example: true }
-                  schema: { type: string, example: MARKET_DEPTH_COLLECTION_30S_5ZONE_1 }
-                  spotSchema: { type: string, example: MD-SPOT-30S-1 }
+                  schema: { type: string, example: MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_2 }
+                  spotSchema: { type: string, example: MD-SPOT-30S-USD-2 }
                   spotCadenceMs: { type: integer, example: 30000 }
+                  depthUnit: { type: string, example: USD_NOTIONAL }
+                  quoteToUSDPolicy: { type: string, example: RAW_QUOTE_PRICE_ASSUMED_USD_1_TO_1_NO_FX }
                   timezone: { type: string, example: Asia/Taipei }
                   utcOffset: { type: string, example: "+08:00" }
 
@@ -119,9 +121,11 @@ paths:
                     example: 100
                   meta:
                     type: object
-                    required: [schema, timezone, utcOffset, indexVersion, indexUpdatedTsMs]
+                    required: [schema, depthUnit, quoteToUSDPolicy, timezone, utcOffset, indexVersion, indexUpdatedTsMs]
                     properties:
-                      schema: { type: string, example: MD-HISTORY-INDEX-1 }
+                      schema: { type: string, example: MD-HISTORY-INDEX-2 }
+                      depthUnit: { type: string, example: USD_NOTIONAL }
+                      quoteToUSDPolicy: { type: string, example: RAW_QUOTE_PRICE_ASSUMED_USD_1_TO_1_NO_FX }
                       timezone: { type: string, example: Asia/Taipei }
                       utcOffset: { type: string, example: "+08:00" }
                       indexVersion:
@@ -186,7 +190,7 @@ paths:
           description: Returns rows with row.t > since.
       responses:
         "200":
-          description: Recent rows. meta.dataAgeMs=max(0,serverNowMs-latestTargetTsMs); stale=dataAgeMs>60000.
+          description: Recent rows. Depth values are USD notional (price*baseQty); quote price is assumed USD 1:1 with no FX. meta.dataAgeMs=max(0,serverNowMs-latestTargetTsMs); stale=dataAgeMs>60000.
         "400":
           description: BAD_SINCE
         "401":
