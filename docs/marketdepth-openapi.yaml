@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: MarketDepth Production API
-  version: "1.1"
-  description: Historical + Recent Spot depth read API.
+  version: "1.2"
+  description: Historical + Recent Spot depth read API. Binance BTC/ETH zone-side validity is limited by trusted REST5000 bootstrap coverage; isolated outer diff-depth levels never expand coverage.
 servers:
   - url: https://marketdepth-production.up.railway.app
 
@@ -40,7 +40,7 @@ components:
         rows: { type: integer, example: 30 }
         bytes: { type: integer, format: int64 }
         sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
-        schema: { type: string, example: MD-SPOT-30S-USD-2 }
+        schema: { type: string, example: MD-SPOT-30S-USD-3 }
 
 security:
   - bearerAuth: []
@@ -60,8 +60,8 @@ paths:
                 required: [ok, schema, spotSchema, spotCadenceMs, depthUnit, quoteToUSDPolicy, timezone, utcOffset]
                 properties:
                   ok: { type: boolean, example: true }
-                  schema: { type: string, example: MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_2 }
-                  spotSchema: { type: string, example: MD-SPOT-30S-USD-2 }
+                  schema: { type: string, example: MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_3 }
+                  spotSchema: { type: string, example: MD-SPOT-30S-USD-3 }
                   spotCadenceMs: { type: integer, example: 30000 }
                   depthUnit: { type: string, example: USD_NOTIONAL }
                   quoteToUSDPolicy: { type: string, example: RAW_QUOTE_PRICE_ASSUMED_USD_1_TO_1_NO_FX }
@@ -123,7 +123,7 @@ paths:
                     type: object
                     required: [schema, depthUnit, quoteToUSDPolicy, timezone, utcOffset, indexVersion, indexUpdatedTsMs]
                     properties:
-                      schema: { type: string, example: MD-HISTORY-INDEX-2 }
+                      schema: { type: string, example: MD-HISTORY-INDEX-3 }
                       depthUnit: { type: string, example: USD_NOTIONAL }
                       quoteToUSDPolicy: { type: string, example: RAW_QUOTE_PRICE_ASSUMED_USD_1_TO_1_NO_FX }
                       timezone: { type: string, example: Asia/Taipei }
