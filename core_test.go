@@ -318,6 +318,41 @@ func TestBinanceCoverageSeparatesObservedFromBootstrapTrusted(t *testing.T) {
 	}
 }
 
+func TestBinanceOuterDiffCannotExpandTrustedZoneValidity(t *testing.T) {
+	s := NewSource("binance", "BTC", "BTCUSDT")
+	s.SetCutoff(10_000)
+
+	// Bootstrap proves only about 150 bps on each side around mid=100.
+	s.Enqueue(BookEvent{RecvMs: 1000, Role: "broad", Kind: "replace",
+		Bids: []Level{{99.99, 1}, {99.5, 1}, {98.5, 1}},
+		Asks: []Level{{100.01, 1}, {100.5, 1}, {101.5, 1}},
+	})
+	s.SetTrustedEdges(98.5, 101.5)
+
+	// Later isolated diff levels appear much farther away. These expand observed
+	// coverage only; they do not prove the untouched interval is complete.
+	s.Enqueue(BookEvent{RecvMs: 2000, Role: "broad", Kind: "level", Side: Bid, Price: 90, Qty: 2})
+	s.Enqueue(BookEvent{RecvMs: 2000, Role: "broad", Kind: "level", Side: Ask, Price: 110, Qty: 2})
+
+	out := s.SnapshotZones(2000, 45_000)
+	if out[0][0] == nil || out[0][1] == nil {
+		t.Fatalf("trusted 0-100 bps zone must remain valid: %#v", out[0])
+	}
+	for i := 1; i < len(Zones); i++ {
+		if out[i][0] != nil || out[i][1] != nil {
+			t.Fatalf("outer diff must not authorize zone %d beyond trusted bootstrap coverage: %#v", i, out[i])
+		}
+	}
+
+	a := s.CoverageAudit(2000)
+	if a.ObservedBid <= a.TrustedBid || a.ObservedAsk <= a.TrustedAsk {
+		t.Fatalf("expected observed coverage to exceed trusted coverage: %#v", a)
+	}
+	if a.TargetBidReached || a.TargetAskReached || a.TargetBothReached {
+		t.Fatalf("target coverage flags must use trusted coverage, not observed: %#v", a)
+	}
+}
+
 func TestBinanceSnapshotEdges(t *testing.T) {
 	bids := map[float64]float64{100: 1, 95: 2, 90: 3}
 	asks := map[float64]float64{101: 1, 110: 2, 120: 3}
@@ -348,6 +383,7 @@ func TestBinanceBroadOnlyBookServesAllZones(t *testing.T) {
 		Bids: []Level{{99.99, 1}, {99.8, 2}, {99.0, 3}, {95, 4}, {85, 5}, {79, 6}},
 		Asks: []Level{{100.01, 1}, {100.2, 2}, {101, 3}, {105, 4}, {115, 5}, {121, 6}},
 	})
+	s.SetTrustedEdges(79, 121)
 	out := s.SnapshotZones(1000, 45_000)
 	for i := range Zones {
 		if out[i][0] == nil || out[i][1] == nil {
