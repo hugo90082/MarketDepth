@@ -4,7 +4,8 @@ import "time"
 
 type CompactPair [2]*float64
 
-// SpotSnapshot is intentionally compact: D[venue][asset][zone] = [bidQty, askQty].
+// SpotSnapshot is intentionally compact: D[venue][asset][zone] = [bidUSDNotional, askUSDNotional].
+// Each level contributes price*baseQty. Quote currencies are treated as USD 1:1 with no FX conversion.
 type SpotSnapshot struct {
 	T int64             `json:"t"`
 	A int64             `json:"a"`
