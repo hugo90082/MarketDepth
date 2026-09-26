@@ -17,14 +17,14 @@ var (
 const (
 	DefaultSpotCadence = 30 * time.Second
 
-	SchemaVersion      = "MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_2"
-	SpotSchema         = "MD-SPOT-30S-USD-2"
+	SchemaVersion      = "MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_3"
+	SpotSchema         = "MD-SPOT-30S-USD-3"
 	FuturesSchema      = "MD-FUTURES-1S-1"
 	EventSchema        = "MD-EVENT-1"
-	PackageSchema      = "MD-PACKAGE-2"
-	HistoryIndexSchema = "MD-HISTORY-INDEX-2"
-	SpotAuditSchema    = "MD-SPOT-AUDIT-2"
-	DatasetFormat      = "MARKET_DEPTH_USD_NOTIONAL_V1"
+	PackageSchema      = "MD-PACKAGE-3"
+	HistoryIndexSchema = "MD-HISTORY-INDEX-3"
+	SpotAuditSchema    = "MD-SPOT-AUDIT-3"
+	DatasetFormat      = "MARKET_DEPTH_USD_NOTIONAL_TRUSTED_COVERAGE_V2"
 	DepthUnit          = "USD_NOTIONAL"
 	QuoteToUSDPolicy   = "RAW_QUOTE_PRICE_ASSUMED_USD_1_TO_1_NO_FX"
 )
