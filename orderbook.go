@@ -114,7 +114,7 @@ func (b *Book) Coverage(mid float64) (float64, float64) {
 	}
 	return cb, ca
 }
-func (b *Book) Zone(z Zone) CompactPair {
+func (b *Book) zoneWithCoverage(z Zone, bidCoverage, askCoverage float64) CompactPair {
 	var out CompactPair
 	if !b.ready {
 		return out
@@ -123,8 +123,7 @@ func (b *Book) Zone(z Zone) CompactPair {
 	if mid <= 0 {
 		return out
 	}
-	cb, ca := b.Coverage(mid)
-	if cb+1e-9 >= z.High {
+	if bidCoverage+1e-9 >= z.High {
 		bid := 0.0
 		for p, q := range b.bids {
 			d := (mid - p) / mid * 10000
@@ -134,7 +133,7 @@ func (b *Book) Zone(z Zone) CompactPair {
 		}
 		out[0] = ptr(bid)
 	}
-	if ca+1e-9 >= z.High {
+	if askCoverage+1e-9 >= z.High {
 		ask := 0.0
 		for p, q := range b.asks {
 			d := (p - mid) / mid * 10000
@@ -145,6 +144,15 @@ func (b *Book) Zone(z Zone) CompactPair {
 		out[1] = ptr(ask)
 	}
 	return out
+}
+
+func (b *Book) Zone(z Zone) CompactPair {
+	mid := b.Mid()
+	if mid <= 0 {
+		return CompactPair{}
+	}
+	cb, ca := b.Coverage(mid)
+	return b.zoneWithCoverage(z, cb, ca)
 }
 
 type SourceState struct {
@@ -327,7 +335,17 @@ func (s *SourceState) snapshotZonesLocked(target int64, maxAgeMs int64) []Compac
 		if book == nil {
 			continue
 		}
-		out[i] = book.Zone(z)
+		if s.Venue == "binance" && book == s.broad {
+			// Binance diff-depth can reveal isolated levels beyond the REST5000
+			// bootstrap edge, but that does not prove that every untouched price
+			// between the bootstrap edge and the new level was known. Therefore
+			// only the last complete bootstrap edges may authorize a zone side.
+			mid := book.Mid()
+			tb, ta := s.trustedCoverageLocked(mid)
+			out[i] = book.zoneWithCoverage(z, tb, ta)
+		} else {
+			out[i] = book.Zone(z)
+		}
 	}
 	return out
 }
@@ -374,6 +392,20 @@ func (s *SourceState) SetTrustedEdges(bidEdge, askEdge float64) {
 	s.trustedAskEdge = askEdge
 }
 
+func (s *SourceState) trustedCoverageLocked(mid float64) (float64, float64) {
+	if mid <= 0 {
+		return 0, 0
+	}
+	tb, ta := 0.0, 0.0
+	if s.trustedBidEdge > 0 && s.trustedBidEdge < mid {
+		tb = (mid - s.trustedBidEdge) / mid * 10000
+	}
+	if s.trustedAskEdge > mid {
+		ta = (s.trustedAskEdge - mid) / mid * 10000
+	}
+	return tb, ta
+}
+
 func (s *SourceState) CoverageAudit(target int64) CoverageAudit {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -387,13 +419,7 @@ func (s *SourceState) CoverageAudit(target int64) CoverageAudit {
 		return CoverageAudit{}
 	}
 	ob, oa := b.Coverage(mid)
-	tb, ta := 0.0, 0.0
-	if s.trustedBidEdge > 0 && s.trustedBidEdge < mid {
-		tb = (mid - s.trustedBidEdge) / mid * 10000
-	}
-	if s.trustedAskEdge > mid {
-		ta = (s.trustedAskEdge - mid) / mid * 10000
-	}
+	tb, ta := s.trustedCoverageLocked(mid)
 	age := int64(0)
 	if s.lastBroadMs > 0 {
 		age = target - s.lastBroadMs
@@ -412,7 +438,7 @@ func (s *SourceState) CoverageAudit(target int64) CoverageAudit {
 	if len(Zones) > 0 {
 		targetBps = Zones[len(Zones)-1].High
 	}
-	bidReached, askReached := ob+1e-9 >= targetBps, oa+1e-9 >= targetBps
+	bidReached, askReached := tb+1e-9 >= targetBps, ta+1e-9 >= targetBps
 	return CoverageAudit{
 		Ready: true, Connected: s.broadConnected, AgeMs: age, DepthAgeMs: depthAge,
 		ObservedBid: ob, ObservedAsk: oa, TrustedBid: tb, TrustedAsk: ta,
