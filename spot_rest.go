@@ -126,7 +126,7 @@ func zonesFromLevels(bids, asks []Level) []CompactPair {
 		d := (mid - x.Price) / mid * 10000
 		for zi, z := range Zones {
 			if d >= z.Low && d < z.High {
-				bidSums[zi] += x.Qty
+				bidSums[zi] += x.Price * x.Qty
 				break
 			}
 		}
@@ -138,7 +138,7 @@ func zonesFromLevels(bids, asks []Level) []CompactPair {
 		d := (x.Price - mid) / mid * 10000
 		for zi, z := range Zones {
 			if d >= z.Low && d < z.High {
-				askSums[zi] += x.Qty
+				askSums[zi] += x.Price * x.Qty
 				break
 			}
 		}
