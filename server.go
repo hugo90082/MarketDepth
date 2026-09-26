@@ -144,6 +144,8 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 			"schema": SchemaVersion,
 			"spotSchema": SpotSchema,
 			"spotCadenceMs": cfg.SpotCadence.Milliseconds(),
+			"depthUnit": DepthUnit,
+			"quoteToUSDPolicy": QuoteToUSDPolicy,
 			"timezone": "Asia/Taipei",
 			"utcOffset": "+08:00",
 		})
@@ -297,6 +299,8 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 			"data": rows,
 			"meta": map[string]any{
 				"schema": SpotSchema,
+				"depthUnit": DepthUnit,
+				"quoteToUSDPolicy": QuoteToUSDPolicy,
 				"timezone": "Asia/Taipei",
 				"utcOffset": "+08:00",
 				"cadenceMs": cfg.SpotCadence.Milliseconds(),
@@ -358,6 +362,8 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 			"nextCursor": next,
 			"meta": map[string]any{
 				"schema": HistoryIndexSchema,
+				"depthUnit": DepthUnit,
+				"quoteToUSDPolicy": QuoteToUSDPolicy,
 				"timezone": "Asia/Taipei",
 				"utcOffset": "+08:00",
 				"indexVersion": version,
