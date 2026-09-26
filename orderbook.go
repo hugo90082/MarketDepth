@@ -129,7 +129,7 @@ func (b *Book) Zone(z Zone) CompactPair {
 		for p, q := range b.bids {
 			d := (mid - p) / mid * 10000
 			if d >= z.Low && d < z.High {
-				bid += q
+				bid += p * q
 			}
 		}
 		out[0] = ptr(bid)
@@ -139,7 +139,7 @@ func (b *Book) Zone(z Zone) CompactPair {
 		for p, q := range b.asks {
 			d := (p - mid) / mid * 10000
 			if d >= z.Low && d < z.High {
-				ask += q
+				ask += p * q
 			}
 		}
 		out[1] = ptr(ask)
