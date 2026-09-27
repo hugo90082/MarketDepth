@@ -141,7 +141,30 @@ func mapLevels(m map[float64]float64) []Level {
 	return r
 }
 
-func enqueueBinDelta(s *SourceState, e timedBin) {
+// pruneBinanceMapsToTrusted rebuilds the local bootstrap maps using only the
+// absolute price interval proven complete by REST5000. Rebuilding (rather than
+// deleting in-place) lets Go release oversized map bucket arrays after a later GC.
+func pruneBinanceMapsToTrusted(bids, asks map[float64]float64, bidEdge, askEdge float64) (map[float64]float64, map[float64]float64) {
+	nb := make(map[float64]float64, len(bids))
+	na := make(map[float64]float64, len(asks))
+	if bidEdge > 0 {
+		for p, q := range bids {
+			if q > 0 && p >= bidEdge {
+				nb[p] = q
+			}
+		}
+	}
+	if askEdge > 0 {
+		for p, q := range asks {
+			if q > 0 && p <= askEdge {
+				na[p] = q
+			}
+		}
+	}
+	return nb, na
+}
+
+func binanceDeltaLevels(e timedBin, bidEdge, askEdge float64) ([]Level, []Level) {
 	bids := make([]Level, 0, len(e.msg.B))
 	asks := make([]Level, 0, len(e.msg.A))
 	for _, x := range e.msg.B {
@@ -150,7 +173,9 @@ func enqueueBinDelta(s *SourceState, e timedBin) {
 		}
 		p, errP := strconv.ParseFloat(x[0], 64)
 		q, errQ := strconv.ParseFloat(x[1], 64)
-		if errP == nil && errQ == nil && p > 0 {
+		if errP == nil && errQ == nil && p > 0 && bidEdge > 0 && p >= bidEdge {
+			// Keep zero-quantity updates inside the trusted interval so existing
+			// levels are deleted correctly.
 			bids = append(bids, Level{Price: p, Qty: q})
 		}
 	}
@@ -160,9 +185,20 @@ func enqueueBinDelta(s *SourceState, e timedBin) {
 		}
 		p, errP := strconv.ParseFloat(x[0], 64)
 		q, errQ := strconv.ParseFloat(x[1], 64)
-		if errP == nil && errQ == nil && p > 0 {
+		if errP == nil && errQ == nil && p > 0 && askEdge > 0 && p <= askEdge {
 			asks = append(asks, Level{Price: p, Qty: q})
 		}
+	}
+	return bids, asks
+}
+
+func enqueueBinDelta(s *SourceState, e timedBin, bidEdge, askEdge float64) {
+	bids, asks := binanceDeltaLevels(e, bidEdge, askEdge)
+	// Even if both sides are filtered out, preserve freshness/sequence handling
+	// separately in runBinance; there is no useful book mutation to enqueue.
+	if len(bids) == 0 && len(asks) == 0 {
+		s.TouchRole(e.recv, "broad")
+		return
 	}
 	s.Enqueue(BookEvent{RecvMs: e.recv, Role: "broad", Kind: "delta", Bids: bids, Asks: asks})
 }
@@ -272,6 +308,10 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 			sleepCtx(ctx, time.Second)
 			continue
 		}
+		// Buffered diff messages can contain isolated prices beyond the original
+		// REST5000 edge. They are not coverage evidence and have no value for any
+		// trusted zone, so do not carry them into the persistent in-memory book.
+		bids, asks = pruneBinanceMapsToTrusted(bids, asks, trustedBidEdge, trustedAskEdge)
 		s.SetTrustedEdges(trustedBidEdge, trustedAskEdge)
 		s.Enqueue(BookEvent{RecvMs: avail, Role: "broad", Kind: "replace", Bids: mapLevels(bids), Asks: mapLevels(asks)})
 		s.ResetCount()
@@ -305,7 +345,7 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 					sleepCtx(ctx, time.Second)
 					goto reconnect
 				}
-				enqueueBinDelta(s, e)
+				enqueueBinDelta(s, e, trustedBidEdge, trustedAskEdge)
 				last = e.msg.LastUpdateID
 			}
 		}
