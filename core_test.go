@@ -353,6 +353,86 @@ func TestBinanceOuterDiffCannotExpandTrustedZoneValidity(t *testing.T) {
 	}
 }
 
+func TestPruneBinanceMapsToTrusted(t *testing.T) {
+	bids := map[float64]float64{100: 1, 95: 2, 90: 3, 80: 4}
+	asks := map[float64]float64{101: 1, 105: 2, 110: 3, 120: 4}
+	pb, pa := pruneBinanceMapsToTrusted(bids, asks, 90, 110)
+
+	if len(pb) != 3 || pb[100] != 1 || pb[95] != 2 || pb[90] != 3 {
+		t.Fatalf("unexpected trusted bid map: %#v", pb)
+	}
+	if _, ok := pb[80]; ok {
+		t.Fatalf("untrusted bid must be removed: %#v", pb)
+	}
+	if len(pa) != 3 || pa[101] != 1 || pa[105] != 2 || pa[110] != 3 {
+		t.Fatalf("unexpected trusted ask map: %#v", pa)
+	}
+	if _, ok := pa[120]; ok {
+		t.Fatalf("untrusted ask must be removed: %#v", pa)
+	}
+}
+
+func TestBinanceDeltaLevelsDropOuterPrices(t *testing.T) {
+	e := timedBin{recv: 2000, msg: binDepth{
+		B: [][]string{{"100", "2"}, {"90", "0"}, {"80", "7"}},
+		A: [][]string{{"101", "3"}, {"110", "0"}, {"120", "8"}},
+	}}
+	bids, asks := binanceDeltaLevels(e, 90, 110)
+
+	if len(bids) != 2 {
+		t.Fatalf("trusted bid updates=%d want=2: %#v", len(bids), bids)
+	}
+	if bids[0].Price < 90 || bids[1].Price < 90 {
+		t.Fatalf("outer bid leaked into trusted delta: %#v", bids)
+	}
+	if len(asks) != 2 {
+		t.Fatalf("trusted ask updates=%d want=2: %#v", len(asks), asks)
+	}
+	if asks[0].Price > 110 || asks[1].Price > 110 {
+		t.Fatalf("outer ask leaked into trusted delta: %#v", asks)
+	}
+	// Zero-quantity deletes at the trusted edge must be retained.
+	foundBidDelete, foundAskDelete := false, false
+	for _, x := range bids {
+		if x.Price == 90 && x.Qty == 0 {
+			foundBidDelete = true
+		}
+	}
+	for _, x := range asks {
+		if x.Price == 110 && x.Qty == 0 {
+			foundAskDelete = true
+		}
+	}
+	if !foundBidDelete || !foundAskDelete {
+		t.Fatalf("trusted deletes lost: bids=%#v asks=%#v", bids, asks)
+	}
+}
+
+func TestFilteredOuterBinanceDeltaDoesNotGrowBook(t *testing.T) {
+	s := NewSource("binance", "BTC", "BTCUSDT")
+	s.SetCutoff(10_000)
+	s.SetTrustedEdges(90, 110)
+	s.Enqueue(BookEvent{RecvMs: 1000, Role: "broad", Kind: "replace",
+		Bids: []Level{{100, 1}, {95, 1}, {90, 1}},
+		Asks: []Level{{101, 1}, {105, 1}, {110, 1}},
+	})
+	before := s.CoverageAudit(1000)
+
+	e := timedBin{recv: 2000, msg: binDepth{
+		B: [][]string{{"80", "9"}},
+		A: [][]string{{"120", "9"}},
+	}}
+	enqueueBinDelta(s, e, 90, 110)
+	after := s.CoverageAudit(2000)
+
+	if after.ValidBidLevels != before.ValidBidLevels || after.ValidAskLevels != before.ValidAskLevels {
+		t.Fatalf("outer delta grew book: before=%#v after=%#v", before, after)
+	}
+	if after.DepthAgeMs != 0 {
+		t.Fatalf("filtered sequence-valid delta must refresh depth age: %#v", after)
+	}
+}
+
 func TestBinanceSnapshotEdges(t *testing.T) {
 	bids := map[float64]float64{100: 1, 95: 2, 90: 3}
 	asks := map[float64]float64{101: 1, 110: 2, 120: 3}
