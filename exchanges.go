@@ -194,12 +194,9 @@ func binanceDeltaLevels(e timedBin, bidEdge, askEdge float64) ([]Level, []Level)
 
 func enqueueBinDelta(s *SourceState, e timedBin, bidEdge, askEdge float64) {
 	bids, asks := binanceDeltaLevels(e, bidEdge, askEdge)
-	// Even if both sides are filtered out, preserve freshness/sequence handling
-	// separately in runBinance; there is no useful book mutation to enqueue.
-	if len(bids) == 0 && len(asks) == 0 {
-		s.TouchRole(e.recv, "broad")
-		return
-	}
+	// Enqueue even an empty filtered delta. A sequence-valid depth message proves
+	// the local book stream is current, and apply("delta") advances depth freshness
+	// without retaining any untrusted outer price levels.
 	s.Enqueue(BookEvent{RecvMs: e.recv, Role: "broad", Kind: "delta", Bids: bids, Asks: asks})
 }
 
