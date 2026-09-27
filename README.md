@@ -111,7 +111,7 @@ The token is intended to remain server-side behind the frontend BFF; do not expo
 
 The proven transport approach is retained while the decision cadence changes to 30 seconds:
 
-- Binance BTC/ETH: persistent local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut. Zone-side validity is authorized only by the latest complete REST5000 bootstrap trusted bid/ask edges; later outer diff levels may update the book but never expand trusted coverage.
+- Binance BTC/ETH: persistent local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut. Zone-side validity is authorized only by the latest complete REST5000 bootstrap trusted bid/ask edges. Diff updates outside those absolute trusted price edges are discarded from the persistent in-memory book; they still participate in sequence continuity but cannot consume long-lived book memory or expand coverage.
 - Binance SOL: REST5000 snapshot.
 - Coinbase: full Level-2 REST snapshot.
 - Kraken: exact WebSocket depth=1000; BTC/ETH also use GroupedBook only to fill uncovered sides/zones; REST fallback remains.
@@ -200,3 +200,27 @@ outer diff level = book update only, never new coverage evidence
 ```
 
 Bid and Ask are evaluated independently. If a zone side exceeds the trusted bootstrap edge, that side is stored as `null`, even when farther observed diff levels exist.
+
+
+## Binance local-book memory bound
+
+The BTC/ETH persistent Binance books are intentionally bounded to the latest REST5000 trusted absolute price interval:
+
+```text
+bid: keep price >= trustedBidEdge
+ask: keep price <= trustedAskEdge
+```
+
+WebSocket diff messages outside that interval are ignored for book storage, while their valid sequence progression still refreshes stream/depth freshness. Bootstrap maps are rebuilt into fresh bounded maps before entering the persistent book so oversized Go map buckets can be reclaimed by GC.
+
+Runtime status logs include:
+
+```text
+heapAllocBytes
+heapInuseBytes
+heapSysBytes
+stackInuseBytes
+numGC
+```
+
+This optimization changes only in-memory retention and observability. It does not change the Spot schema, Historical data contract, or trusted-coverage validity semantics.
