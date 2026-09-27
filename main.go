@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -20,8 +21,8 @@ func writeMeta(cfg Config) error {
 		"timezone": "Asia/Taipei", "utcOffset": "+08:00", "historyAPI": "sealed immutable spot chunks + 16m recent window", "recentAPI": "/api/v1/recent/depth", "recentBufferMs": recentBufferDuration.Milliseconds(), "recentPollMinMs": recentPollMinInterval.Milliseconds(), "all4Stored": false,
 		"depthUnit": DepthUnit, "quoteToUSDPolicy": QuoteToUSDPolicy,
 		"spotAcquisition": "synchronized_30s_hybrid", "spotRequestLeadMs": spotRequestLead.Milliseconds(), "spotAcceptWindowMs": spotAcceptWindow.Milliseconds(),
-		"spotSources": map[string]string{"binance": "BTC/ETH local book: REST5000 bootstrap + diff-depth 1000ms + U/u bridge; exact-T cut; learned outer levels retained; SOL one REST5000 snapshot", "coinbase": "one full level2 REST snapshot per 30s row", "kraken": "exact WS depth=1000 plus BTC/ETH GroupedBook depth=1000 grouping=1000 filling only uncovered zone sides; REST500 failure fallback", "bitfinex": "P0 near + P2 broad REST snapshots per 30s row"},
-		"binanceCoveragePolicy": "BTC/ETH zone-side validity is gated only by the last complete REST5000 bootstrap trusted bid/ask edges; later diff-depth outer levels may update the book but cannot expand trusted coverage; SOL uses REST snapshot coverage",
+		"spotSources": map[string]string{"binance": "BTC/ETH local book: REST5000 bootstrap + diff-depth 1000ms + U/u bridge; exact-T cut; persistent book bounded to trusted bootstrap price edges; SOL one REST5000 snapshot", "coinbase": "one full level2 REST snapshot per 30s row", "kraken": "exact WS depth=1000 plus BTC/ETH GroupedBook depth=1000 grouping=1000 filling only uncovered zone sides; REST500 failure fallback", "bitfinex": "P0 near + P2 broad REST snapshots per 30s row"},
+		"binanceCoveragePolicy": "BTC/ETH zone-side validity is gated only by the last complete REST5000 bootstrap trusted bid/ask edges; diff-depth prices outside those absolute trusted edges are discarded from the persistent book; SOL uses REST snapshot coverage",
 		"missingSemantics": "coverage is independent per venue/asset/zone/side; confirmed empty=0; insufficient coverage or source failure=null; no fill/interpolation",
 	}
 	b, _ := json.MarshalIndent(m, "", "  ")
@@ -220,7 +221,9 @@ func statusLoop(ctx context.Context, cfg Config, store *Store, rt *RuntimeStatus
 			if x := rt.LastError.Load(); x != nil {
 				errStr = x.(string)
 			}
-			log.Printf("marketdepth-status uptimeSec=%d spotRows=%d futuresRows=%d eventRows=%d diskTotal=%d diskUsed=%d diskFree=%d pressure=%s lastFlushMs=%d lastError=%q", (nowMs()-rt.StartedMs)/1000, rt.SpotRows.Load(), rt.FuturesRows.Load(), rt.EventRows.Load(), total, used, free, pressure(cfg, free), store.LastFlush(), errStr)
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			log.Printf("marketdepth-status uptimeSec=%d spotRows=%d futuresRows=%d eventRows=%d diskTotal=%d diskUsed=%d diskFree=%d pressure=%s lastFlushMs=%d heapAllocBytes=%d heapInuseBytes=%d heapSysBytes=%d stackInuseBytes=%d numGC=%d lastError=%q", (nowMs()-rt.StartedMs)/1000, rt.SpotRows.Load(), rt.FuturesRows.Load(), rt.EventRows.Load(), total, used, free, pressure(cfg, free), store.LastFlush(), ms.HeapAlloc, ms.HeapInuse, ms.HeapSys, ms.StackInuse, ms.NumGC, errStr)
 			if rt.Feeds != nil {
 				t := nowMs()
 				cov := map[string]CoverageAudit{}
