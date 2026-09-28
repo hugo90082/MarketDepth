@@ -433,6 +433,59 @@ func TestFilteredOuterBinanceDeltaDoesNotGrowBook(t *testing.T) {
 	}
 }
 
+func TestBinanceRefreshFloorIsAdaptive(t *testing.T) {
+	cases := []struct {
+		initial float64
+		want    float64
+	}{
+		{100, 25},
+		{40, 10},
+		{8, 2},
+		{2, 1},
+		{0.5, 0.25},
+	}
+	for _, tc := range cases {
+		got := binanceRefreshFloor(tc.initial)
+		if math.Abs(got-tc.want) > 1e-9 {
+			t.Fatalf("initial=%v got=%v want=%v", tc.initial, got, tc.want)
+		}
+	}
+}
+
+func TestTrustedCoverageNowDetectsBookSideDepletion(t *testing.T) {
+	s := NewSource("binance", "BTC", "BTCUSDT")
+	s.SetCutoff(10_000)
+	s.Enqueue(BookEvent{RecvMs: 1000, Role: "broad", Kind: "replace",
+		Bids: []Level{{100, 1}, {95, 1}, {90, 1}},
+		Asks: []Level{{101, 1}, {105, 1}, {110, 1}},
+	})
+	s.SetTrustedEdges(90, 110)
+
+	ready, bidBps, askBps := s.TrustedCoverageNow()
+	if !ready || bidBps <= 0 || askBps <= 0 {
+		t.Fatalf("fresh trusted book must be ready: ready=%v bid=%v ask=%v", ready, bidBps, askBps)
+	}
+
+	// Simulate price walking out of the fixed trusted window until every bid
+	// inside it has been removed. This was the production failure mode.
+	for _, p := range []float64{100, 95, 90} {
+		s.Enqueue(BookEvent{RecvMs: 2000, Role: "broad", Kind: "level", Side: Bid, Price: p, Qty: 0})
+	}
+	ready, _, _ = s.TrustedCoverageNow()
+	if ready {
+		t.Fatal("empty trusted bid side must request rebootstrap")
+	}
+}
+
+func TestBinanceMapMid(t *testing.T) {
+	bids := map[float64]float64{100: 1, 99: 2}
+	asks := map[float64]float64{101: 1, 102: 2}
+	got := binanceMapMid(bids, asks)
+	if math.Abs(got-100.5) > 1e-9 {
+		t.Fatalf("mid=%v want=100.5", got)
+	}
+}
+
 func TestBinanceSnapshotEdges(t *testing.T) {
 	bids := map[float64]float64{100: 1, 95: 2, 90: 3}
 	asks := map[float64]float64{101: 1, 110: 2, 120: 3}
