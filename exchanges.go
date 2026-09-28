@@ -200,9 +200,148 @@ func enqueueBinDelta(s *SourceState, e timedBin, bidEdge, askEdge float64) {
 	s.Enqueue(BookEvent{RecvMs: e.recv, Role: "broad", Kind: "delta", Bids: bids, Asks: asks})
 }
 
+const binanceBootstrapMaxAge = 15 * time.Minute
+
+func binanceRefreshFloor(initialCoverage float64) float64 {
+	if initialCoverage <= 0 {
+		return 0
+	}
+	f := initialCoverage * 0.25
+	if f < 1 {
+		f = 1
+	}
+	if f > 25 {
+		f = 25
+	}
+	if f >= initialCoverage {
+		f = initialCoverage * 0.5
+	}
+	return f
+}
+
+func binanceCoverageFromEdges(mid, bidEdge, askEdge float64) (float64, float64) {
+	if mid <= 0 {
+		return 0, 0
+	}
+	bid, ask := 0.0, 0.0
+	if bidEdge > 0 && bidEdge < mid {
+		bid = (mid - bidEdge) / mid * 10000
+	}
+	if askEdge > mid {
+		ask = (askEdge - mid) / mid * 10000
+	}
+	return bid, ask
+}
+
+func binanceMapMid(bids, asks map[float64]float64) float64 {
+	bestBid, bestAsk := 0.0, 0.0
+	for p, q := range bids {
+		if q > 0 && p > bestBid {
+			bestBid = p
+		}
+	}
+	for p, q := range asks {
+		if q <= 0 {
+			continue
+		}
+		if bestAsk == 0 || p < bestAsk {
+			bestAsk = p
+		}
+	}
+	if bestBid <= 0 || bestAsk <= 0 {
+		return 0
+	}
+	return (bestBid + bestAsk) / 2
+}
+
+type binanceBootstrap struct {
+	bids, asks             map[float64]float64
+	trustedBid, trustedAsk float64
+	last                   uint64
+	avail                  int64
+	initialBidBps          float64
+	initialAskBps          float64
+}
+
+func prepareBinanceBootstrap(ctx context.Context, symbol string, msgCh <-chan timedBin) (binanceBootstrap, error) {
+	var out binanceBootstrap
+	snap, srecv, err := fetchBinanceSnapshot(ctx, symbol)
+	if err != nil {
+		return out, err
+	}
+	bids := map[float64]float64{}
+	asks := map[float64]float64{}
+	for _, x := range snap.Bids {
+		if len(x) < 2 {
+			continue
+		}
+		p, errP := strconv.ParseFloat(x[0], 64)
+		q, errQ := strconv.ParseFloat(x[1], 64)
+		if errP == nil && errQ == nil && p > 0 && q > 0 {
+			bids[p] = q
+		}
+	}
+	for _, x := range snap.Asks {
+		if len(x) < 2 {
+			continue
+		}
+		p, errP := strconv.ParseFloat(x[0], 64)
+		q, errQ := strconv.ParseFloat(x[1], 64)
+		if errP == nil && errQ == nil && p > 0 && q > 0 {
+			asks[p] = q
+		}
+	}
+	trustedBid, trustedAsk := binanceTrustedEdges(bids, asks)
+	last := snap.LastUpdateID
+	avail := srecv
+
+	// Keep draining everything already buffered while the REST snapshot was in
+	// flight. A closed channel must terminate the bootstrap rather than spin.
+	for {
+		select {
+		case e, ok := <-msgCh:
+			if !ok {
+				return out, io.EOF
+			}
+			if e.msg.LastUpdateID <= last {
+				continue
+			}
+			if e.msg.FirstUpdateID > last+1 {
+				return out, fmt.Errorf("sequence gap during bootstrap: U=%d last=%d", e.msg.FirstUpdateID, last)
+			}
+			applyBinLocal(bids, asks, e.msg)
+			last = e.msg.LastUpdateID
+			if e.recv > avail {
+				avail = e.recv
+			}
+		default:
+			bids, asks = pruneBinanceMapsToTrusted(bids, asks, trustedBid, trustedAsk)
+			mid := binanceMapMid(bids, asks)
+			bidBps, askBps := binanceCoverageFromEdges(mid, trustedBid, trustedAsk)
+			out = binanceBootstrap{
+				bids: bids, asks: asks,
+				trustedBid: trustedBid, trustedAsk: trustedAsk,
+				last: last, avail: avail,
+				initialBidBps: bidBps, initialAskBps: askBps,
+			}
+			return out, nil
+		}
+	}
+}
+
+func nextBinanceRetry(d time.Duration) time.Duration {
+	d *= 2
+	if d > 30*time.Second {
+		return 30 * time.Second
+	}
+	return d
+}
+
 func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn) {
 	symbol := s.Pair
 	stream := strings.ToLower(symbol) + "@depth"
+	retryDelay := time.Second
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -210,9 +349,12 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 		c, _, err := websocket.DefaultDialer.DialContext(ctx, "wss://stream.binance.com:9443/ws/"+stream, nil)
 		if err != nil {
 			emit(EventRecord{T: nowMs(), Venue: "binance", Asset: asset, Type: "disconnect", Code: "DIAL", Reason: err.Error()})
-			sleepCtx(ctx, time.Second)
+			log.Printf("binance-%s reconnect dial_error retry=%s err=%v", asset, retryDelay, err)
+			sleepCtx(ctx, retryDelay)
+			retryDelay = nextBinanceRetry(retryDelay)
 			continue
 		}
+
 		defaultPing := c.PingHandler()
 		c.SetPingHandler(func(appData string) error {
 			s.TouchRole(nowMs(), "broad")
@@ -243,78 +385,36 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 			}
 		}()
 
-		snap, srecv, err := fetchBinanceSnapshot(ctx, symbol)
+		boot, err := prepareBinanceBootstrap(ctx, symbol, msgCh)
 		if err != nil {
 			c.Close()
-			emit(EventRecord{T: nowMs(), Venue: "binance", Asset: asset, Type: "api_error", Code: "SNAPSHOT", Reason: err.Error()})
-			sleepCtx(ctx, time.Second)
+			emit(EventRecord{T: nowMs(), Venue: "binance", Asset: asset, Type: "api_error", Code: "BOOTSTRAP", Reason: err.Error()})
+			log.Printf("binance-%s bootstrap_failed retry=%s err=%v", asset, retryDelay, err)
+			sleepCtx(ctx, retryDelay)
+			retryDelay = nextBinanceRetry(retryDelay)
 			continue
 		}
-		bids := map[float64]float64{}
-		asks := map[float64]float64{}
-		for _, x := range snap.Bids {
-			p, _ := strconv.ParseFloat(x[0], 64)
-			q, _ := strconv.ParseFloat(x[1], 64)
-			if q > 0 {
-				bids[p] = q
-			}
-		}
-		for _, x := range snap.Asks {
-			p, _ := strconv.ParseFloat(x[0], 64)
-			q, _ := strconv.ParseFloat(x[1], 64)
-			if q > 0 {
-				asks[p] = q
-			}
-		}
-		trustedBidEdge, trustedAskEdge := binanceTrustedEdges(bids, asks)
-		last := snap.LastUpdateID
-		avail := srecv
-		buffered := []timedBin{}
-		for {
-			select {
-			case e, ok := <-msgCh:
-				if !ok {
-					break
-				}
-				buffered = append(buffered, e)
-			default:
-				goto drained
-			}
-		}
-	drained:
-		bridgeOK := true
-		for _, e := range buffered {
-			if e.msg.LastUpdateID <= last {
-				continue
-			}
-			if e.msg.FirstUpdateID > last+1 {
-				bridgeOK = false
-				break
-			}
-			applyBinLocal(bids, asks, e.msg)
-			last = e.msg.LastUpdateID
-			if e.recv > avail {
-				avail = e.recv
-			}
-		}
-		if !bridgeOK {
-			c.Close()
-			s.GapRole(nowMs(), "broad", "SEQUENCE_GAP")
-			g, r := s.Counters()
-			emit(EventRecord{T: nowMs(), Venue: "binance", Asset: asset, Type: "sequence_gap", Gaps: g, Resets: r})
-			sleepCtx(ctx, time.Second)
-			continue
-		}
-		// Buffered diff messages can contain isolated prices beyond the original
-		// REST5000 edge. They are not coverage evidence and have no value for any
-		// trusted zone, so do not carry them into the persistent in-memory book.
-		bids, asks = pruneBinanceMapsToTrusted(bids, asks, trustedBidEdge, trustedAskEdge)
-		s.SetTrustedEdges(trustedBidEdge, trustedAskEdge)
-		s.Enqueue(BookEvent{RecvMs: avail, Role: "broad", Kind: "replace", Bids: mapLevels(bids), Asks: mapLevels(asks)})
+
+		s.SetTrustedEdges(boot.trustedBid, boot.trustedAsk)
+		s.Enqueue(BookEvent{RecvMs: boot.avail, Role: "broad", Kind: "replace", Bids: mapLevels(boot.bids), Asks: mapLevels(boot.asks)})
+		// Drop bootstrap construction maps after converting to compact levels so
+		// the persistent SourceState book is the only long-lived copy.
+		boot.bids, boot.asks = nil, nil
 		s.ResetCount()
 		g, r := s.Counters()
-		emit(EventRecord{T: avail, Venue: "binance", Asset: asset, Type: "reset_done", Gaps: g, Resets: r, Recovered: true})
+		emit(EventRecord{T: boot.avail, Venue: "binance", Asset: asset, Type: "reset_done", Gaps: g, Resets: r, Recovered: true})
 
+		last := boot.last
+		trustedBidEdge, trustedAskEdge := boot.trustedBid, boot.trustedAsk
+		bidFloor := binanceRefreshFloor(boot.initialBidBps)
+		askFloor := binanceRefreshFloor(boot.initialAskBps)
+		bootAt := time.Now()
+		nextCoverageCheck := time.Now().Add(5 * time.Second)
+		retryDelay = time.Second
+
+		log.Printf("binance-%s bootstrap_ok bidBps=%.2f askBps=%.2f bidFloor=%.2f askFloor=%.2f", asset, boot.initialBidBps, boot.initialAskBps, bidFloor, askFloor)
+
+	live:
 		for {
 			select {
 			case <-ctx.Done():
@@ -325,11 +425,18 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 				s.GapRole(nowMs(), "broad", "DISCONNECTED")
 				g, r = s.Counters()
 				emit(EventRecord{T: nowMs(), Venue: "binance", Asset: asset, Type: "disconnect", Reason: err.Error(), Gaps: g, Resets: r})
-				sleepCtx(ctx, time.Second)
-				goto reconnect
+				log.Printf("binance-%s disconnected retry=%s err=%v", asset, retryDelay, err)
+				sleepCtx(ctx, retryDelay)
+				retryDelay = nextBinanceRetry(retryDelay)
+				break live
 			case e, ok := <-msgCh:
 				if !ok {
-					goto reconnect
+					c.Close()
+					s.GapRole(nowMs(), "broad", "DISCONNECTED")
+					log.Printf("binance-%s websocket_closed retry=%s", asset, retryDelay)
+					sleepCtx(ctx, retryDelay)
+					retryDelay = nextBinanceRetry(retryDelay)
+					break live
 				}
 				if e.msg.LastUpdateID <= last {
 					continue
@@ -339,14 +446,65 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 					s.GapRole(e.recv, "broad", "SEQUENCE_GAP")
 					g, r = s.Counters()
 					emit(EventRecord{T: e.recv, Venue: "binance", Asset: asset, Type: "sequence_gap", Gaps: g, Resets: r})
-					sleepCtx(ctx, time.Second)
-					goto reconnect
+					log.Printf("binance-%s sequence_gap U=%d last=%d retry=%s", asset, e.msg.FirstUpdateID, last, retryDelay)
+					sleepCtx(ctx, retryDelay)
+					retryDelay = nextBinanceRetry(retryDelay)
+					break live
 				}
 				enqueueBinDelta(s, e, trustedBidEdge, trustedAskEdge)
 				last = e.msg.LastUpdateID
+
+				if time.Now().Before(nextCoverageCheck) {
+					continue
+				}
+				nextCoverageCheck = time.Now().Add(5 * time.Second)
+
+				ready, bidBps, askBps := s.TrustedCoverageNow()
+				reason := ""
+				switch {
+				case !ready:
+					reason = "book_side_depleted"
+				case bidFloor > 0 && bidBps < bidFloor:
+					reason = fmt.Sprintf("bid_headroom_%.2f_bps", bidBps)
+				case askFloor > 0 && askBps < askFloor:
+					reason = fmt.Sprintf("ask_headroom_%.2f_bps", askBps)
+				case time.Since(bootAt) >= binanceBootstrapMaxAge:
+					reason = "periodic_15m"
+				}
+				if reason == "" {
+					continue
+				}
+
+				// Refresh against the same live WebSocket. The reader goroutine
+				// buffers diff messages while REST5000 is in flight; the helper
+				// bridges them onto the new snapshot before the book is replaced.
+				log.Printf("binance-%s rebootstrap_start reason=%s bidBps=%.2f askBps=%.2f", asset, reason, bidBps, askBps)
+				fresh, refreshErr := prepareBinanceBootstrap(ctx, symbol, msgCh)
+				if refreshErr != nil {
+					c.Close()
+					s.GapRole(nowMs(), "broad", "REBOOTSTRAP_FAILED")
+					g, r = s.Counters()
+					emit(EventRecord{T: nowMs(), Venue: "binance", Asset: asset, Type: "api_error", Code: "REBOOTSTRAP", Reason: refreshErr.Error(), Gaps: g, Resets: r})
+					log.Printf("binance-%s rebootstrap_failed reason=%s retry=%s err=%v", asset, reason, retryDelay, refreshErr)
+					sleepCtx(ctx, retryDelay)
+					retryDelay = nextBinanceRetry(retryDelay)
+					break live
+				}
+
+				s.SetTrustedEdges(fresh.trustedBid, fresh.trustedAsk)
+				s.Enqueue(BookEvent{RecvMs: fresh.avail, Role: "broad", Kind: "replace", Bids: mapLevels(fresh.bids), Asks: mapLevels(fresh.asks)})
+				fresh.bids, fresh.asks = nil, nil
+				s.ResetCount()
+				trustedBidEdge, trustedAskEdge = fresh.trustedBid, fresh.trustedAsk
+				last = fresh.last
+				bidFloor = binanceRefreshFloor(fresh.initialBidBps)
+				askFloor = binanceRefreshFloor(fresh.initialAskBps)
+				bootAt = time.Now()
+				retryDelay = time.Second
+				emit(EventRecord{T: fresh.avail, Venue: "binance", Asset: asset, Type: "reset_done", Code: "REBOOTSTRAP", Recovered: true})
+				log.Printf("binance-%s rebootstrap_ok reason=%s bidBps=%.2f askBps=%.2f bidFloor=%.2f askFloor=%.2f", asset, reason, fresh.initialBidBps, fresh.initialAskBps, bidFloor, askFloor)
 			}
 		}
-	reconnect:
 	}
 }
 
