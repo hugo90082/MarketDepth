@@ -204,14 +204,14 @@ Bid and Ask are evaluated independently. If a zone side exceeds the trusted boot
 
 ## Binance local-book memory bound
 
-The BTC/ETH persistent Binance books are intentionally bounded to the latest REST5000 trusted absolute price interval:
+The BTC/ETH persistent Binance books are intentionally bounded to the latest REST5000 trusted absolute price interval. To prevent a fixed absolute interval from becoming stale as price moves, the collector automatically re-bootstraps when either trusted side approaches an adaptive headroom floor and also at least every 15 minutes:
 
 ```text
 bid: keep price >= trustedBidEdge
 ask: keep price <= trustedAskEdge
 ```
 
-WebSocket diff messages outside that interval are ignored for book storage, while their valid sequence progression still refreshes stream/depth freshness. Bootstrap maps are rebuilt into fresh bounded maps before entering the persistent book so oversized Go map buckets can be reclaimed by GC.
+WebSocket diff messages outside that interval are ignored for book storage, while their valid sequence progression still refreshes stream/depth freshness. A refresh reuses the live WebSocket, buffers diff messages while REST5000 is in flight, bridges those messages onto the new snapshot, then atomically replaces the persistent book. Bootstrap maps are rebuilt into fresh bounded maps before entering the persistent book so oversized Go map buckets can be reclaimed by GC. Reconnect/bootstrap failures use exponential backoff (up to 30 seconds) instead of hammering REST.
 
 Runtime status logs include:
 
