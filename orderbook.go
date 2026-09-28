@@ -406,6 +406,21 @@ func (s *SourceState) trustedCoverageLocked(mid float64) (float64, float64) {
 	return tb, ta
 }
 
+
+func (s *SourceState) TrustedCoverageNow() (bool, float64, float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.broad == nil || !s.broad.ready {
+		return false, 0, 0
+	}
+	mid := s.broad.Mid()
+	if mid <= 0 {
+		return false, 0, 0
+	}
+	tb, ta := s.trustedCoverageLocked(mid)
+	return true, tb, ta
+}
+
 func (s *SourceState) CoverageAudit(target int64) CoverageAudit {
 	s.mu.Lock()
 	defer s.mu.Unlock()
