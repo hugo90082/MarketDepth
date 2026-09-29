@@ -115,7 +115,7 @@ The token is intended to remain server-side behind the frontend BFF; do not expo
 
 The proven transport approach is retained while the decision cadence changes to 30 seconds:
 
-- Binance BTC/ETH: persistent local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut. Zone-side validity is authorized only by the latest complete REST5000 bootstrap trusted bid/ask edges. Diff updates outside those absolute trusted price edges are discarded from the persistent in-memory book; they still participate in sequence continuity but cannot consume long-lived book memory or expand coverage.
+- Binance BTC/ETH: persistent local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut. Zone-side validity is authorized only by the latest complete REST5000 bootstrap trusted bid/ask edges. During the current RAM experiment, all sequence-valid diff levels are retained as observed-only local-book state, including levels outside trusted REST edges. Those outer levels never authorize zone validity. Zero-quantity updates still delete cancelled/removed levels. A normal rebootstrap refreshes the newly proven REST interval without discarding sequence-maintained outer observations; a true disconnect or sequence gap rebuilds from a clean snapshot.
 - Binance SOL: REST5000 snapshot.
 - Coinbase: full Level-2 REST snapshot.
 - Kraken: exact WebSocket depth=1000; BTC/ETH also use GroupedBook only to fill uncovered sides/zones; REST fallback remains.
@@ -214,7 +214,7 @@ bid: keep price >= trustedBidEdge
 ask: keep price <= trustedAskEdge
 ```
 
-WebSocket diff messages outside that interval are ignored for book storage, while their valid sequence progression still refreshes stream/depth freshness. A refresh reuses the live WebSocket, buffers diff messages while REST5000 is in flight, bridges those messages onto the new snapshot, then atomically replaces the persistent book. Bootstrap maps are rebuilt into fresh bounded maps before entering the persistent book so oversized Go map buckets can be reclaimed by GC. Reconnect/bootstrap failures use exponential backoff (up to 30 seconds) instead of hammering REST.
+Current experiment: WebSocket diff messages outside the latest trusted REST interval are retained in memory as observed-only levels to measure real RAM growth when the collector does not prune outer prices. They still do not expand trusted coverage. Qty=0 updates continue to remove levels because retaining cancelled orders would make the book invalid and would measure artificial garbage rather than real active-book memory. Periodic/adaptive REST5000 refreshes replace only the REST-proven absolute interval while keeping sequence-maintained outer observations. A disconnect or sequence gap invalidates that continuity and therefore resets to a clean snapshot. Reconnect/bootstrap failures use exponential backoff (up to 30 seconds) instead of hammering REST.
 
 Runtime status logs include:
 
