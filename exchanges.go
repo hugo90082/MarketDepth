@@ -164,7 +164,7 @@ func pruneBinanceMapsToTrusted(bids, asks map[float64]float64, bidEdge, askEdge 
 	return nb, na
 }
 
-func binanceDeltaLevels(e timedBin, bidEdge, askEdge float64) ([]Level, []Level) {
+func binanceDeltaLevels(e timedBin) ([]Level, []Level) {
 	bids := make([]Level, 0, len(e.msg.B))
 	asks := make([]Level, 0, len(e.msg.A))
 	for _, x := range e.msg.B {
@@ -173,9 +173,9 @@ func binanceDeltaLevels(e timedBin, bidEdge, askEdge float64) ([]Level, []Level)
 		}
 		p, errP := strconv.ParseFloat(x[0], 64)
 		q, errQ := strconv.ParseFloat(x[1], 64)
-		if errP == nil && errQ == nil && p > 0 && bidEdge > 0 && p >= bidEdge {
-			// Keep zero-quantity updates inside the trusted interval so existing
-			// levels are deleted correctly.
+		if errP == nil && errQ == nil && p > 0 {
+			// Keep every observed price level. Qty=0 must also be retained as
+			// an update so stale levels are actually deleted from the book.
 			bids = append(bids, Level{Price: p, Qty: q})
 		}
 	}
@@ -185,18 +185,15 @@ func binanceDeltaLevels(e timedBin, bidEdge, askEdge float64) ([]Level, []Level)
 		}
 		p, errP := strconv.ParseFloat(x[0], 64)
 		q, errQ := strconv.ParseFloat(x[1], 64)
-		if errP == nil && errQ == nil && p > 0 && askEdge > 0 && p <= askEdge {
+		if errP == nil && errQ == nil && p > 0 {
 			asks = append(asks, Level{Price: p, Qty: q})
 		}
 	}
 	return bids, asks
 }
 
-func enqueueBinDelta(s *SourceState, e timedBin, bidEdge, askEdge float64) {
-	bids, asks := binanceDeltaLevels(e, bidEdge, askEdge)
-	// Enqueue even an empty filtered delta. A sequence-valid depth message proves
-	// the local book stream is current, and apply("delta") advances depth freshness
-	// without retaining any untrusted outer price levels.
+func enqueueBinDelta(s *SourceState, e timedBin) {
+	bids, asks := binanceDeltaLevels(e)
 	s.Enqueue(BookEvent{RecvMs: e.recv, Role: "broad", Kind: "delta", Bids: bids, Asks: asks})
 }
 
@@ -315,7 +312,6 @@ func prepareBinanceBootstrap(ctx context.Context, symbol string, msgCh <-chan ti
 				avail = e.recv
 			}
 		default:
-			bids, asks = pruneBinanceMapsToTrusted(bids, asks, trustedBid, trustedAsk)
 			mid := binanceMapMid(bids, asks)
 			bidBps, askBps := binanceCoverageFromEdges(mid, trustedBid, trustedAsk)
 			out = binanceBootstrap{
@@ -451,7 +447,7 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 					retryDelay = nextBinanceRetry(retryDelay)
 					break live
 				}
-				enqueueBinDelta(s, e, trustedBidEdge, trustedAskEdge)
+				enqueueBinDelta(s, e)
 				last = e.msg.LastUpdateID
 
 				if time.Now().Before(nextCoverageCheck) {
@@ -477,7 +473,9 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 
 				// Refresh against the same live WebSocket. The reader goroutine
 				// buffers diff messages while REST5000 is in flight; the helper
-				// bridges them onto the new snapshot before the book is replaced.
+				// bridges them onto the new snapshot. The trusted REST interval
+				// is replaced authoritatively while observed outer levels remain
+				// sequence-maintained for the full-retention RAM experiment.
 				log.Printf("binance-%s rebootstrap_start reason=%s bidBps=%.2f askBps=%.2f", asset, reason, bidBps, askBps)
 				fresh, refreshErr := prepareBinanceBootstrap(ctx, symbol, msgCh)
 				if refreshErr != nil {
@@ -492,7 +490,11 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 				}
 
 				s.SetTrustedEdges(fresh.trustedBid, fresh.trustedAsk)
-				s.Enqueue(BookEvent{RecvMs: fresh.avail, Role: "broad", Kind: "replace", Bids: mapLevels(fresh.bids), Asks: mapLevels(fresh.asks)})
+				s.Enqueue(BookEvent{
+					RecvMs: fresh.avail, Role: "broad", Kind: "refresh",
+					Bids: mapLevels(fresh.bids), Asks: mapLevels(fresh.asks),
+					BidEdge: fresh.trustedBid, AskEdge: fresh.trustedAsk,
+				})
 				fresh.bids, fresh.asks = nil, nil
 				s.ResetCount()
 				trustedBidEdge, trustedAskEdge = fresh.trustedBid, fresh.trustedAsk
