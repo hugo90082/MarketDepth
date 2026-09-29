@@ -42,7 +42,6 @@ type Config struct {
 	ChunkDuration        time.Duration
 	PackageDuration      time.Duration
 	PackageMaxBytes      int64
-	HistoryRatePerMinute int
 	NoticeFreeBytes      int64
 	WarningFreeBytes     int64
 	UrgentFreeBytes      int64
@@ -58,15 +57,6 @@ func envInt64(k string, d int64) int64 {
 	}
 	return d
 }
-func envInt(k string, d int) int {
-	if v := os.Getenv(k); v != "" {
-		if n, e := strconv.Atoi(v); e == nil {
-			return n
-		}
-	}
-	return d
-}
-
 func LoadConfig() Config {
 	data := os.Getenv("DATA_DIR")
 	if data == "" {
@@ -85,7 +75,7 @@ func LoadConfig() Config {
 		AdminPassword: os.Getenv("ADMIN_PASSWORD"), SessionSecret: os.Getenv("SESSION_SECRET"), HistoryToken: os.Getenv("HISTORY_READ_TOKEN"),
 		SpotCadence: DefaultSpotCadence, FuturesCadence: time.Second, FinalizeDelay: 100 * time.Millisecond,
 		ChunkDuration: 15 * time.Minute, PackageDuration: time.Duration(envInt64("PACKAGE_DURATION_MS", int64((12*time.Hour)/time.Millisecond))) * time.Millisecond,
-		PackageMaxBytes: envInt64("PACKAGE_MAX_BYTES", 60_000_000), HistoryRatePerMinute: envInt("HISTORY_RATE_PER_MINUTE", 30),
+		PackageMaxBytes: envInt64("PACKAGE_MAX_BYTES", 60_000_000),
 		NoticeFreeBytes:    envInt64("NOTICE_FREE_BYTES", 150_000_000), WarningFreeBytes: envInt64("WARNING_FREE_BYTES", 100_000_000),
 		UrgentFreeBytes: envInt64("URGENT_FREE_BYTES", 50_000_000), ProtectFreeBytes: envInt64("PROTECT_FREE_BYTES", 25_000_000), StopFreeBytes: envInt64("STOP_FREE_BYTES", 10_000_000),
 	}
