@@ -389,10 +389,10 @@ func TestBinanceDeltaLevelsRetainOuterPrices(t *testing.T) {
 func TestOuterBinanceDeltaGrowsObservedBookButNotTrusted(t *testing.T) {
 	s := NewSource("binance", "BTC", "BTCUSDT")
 	s.SetCutoff(10_000)
-	s.SetTrustedEdges(90, 110)
+	s.SetTrustedEdges(98.5, 101.5)
 	s.Enqueue(BookEvent{RecvMs: 1000, Role: "broad", Kind: "replace",
-		Bids: []Level{{100, 1}, {95, 1}, {90, 1}},
-		Asks: []Level{{101, 1}, {105, 1}, {110, 1}},
+		Bids: []Level{{100, 1}, {99, 1}, {98.5, 1}},
+		Asks: []Level{{101, 1}, {101.2, 1}, {101.5, 1}},
 	})
 	before := s.CoverageAudit(1000)
 
