@@ -275,26 +275,49 @@ func TestRESTZonesMatchBookZoneMath(t *testing.T) {
 }
 
 
-func TestBitfinexMergeUsesBroadFrom100Bps(t *testing.T) {
+func TestBitfinexMergePrefersP0ThenP1NearAndP2Broad(t *testing.T) {
 	mk := func(v float64) *float64 { return &v }
-	near := make([]CompactPair, len(Zones))
-	broad := make([]CompactPair, len(Zones))
+	p0 := make([]CompactPair, len(Zones))
+	p1 := make([]CompactPair, len(Zones))
+	p2 := make([]CompactPair, len(Zones))
+
+	// P0 has the preferred bid but cannot prove the ask reaches 100 bps.
+	p0[0] = CompactPair{mk(10), nil}
+	// P1 can prove both sides. It must fill only the missing ask, not
+	// overwrite the higher-resolution P0 bid.
+	p1[0] = CompactPair{mk(20), mk(21)}
 	for i := range Zones {
-		near[i] = CompactPair{mk(float64(10 + i)), mk(float64(20 + i))}
-		broad[i] = CompactPair{mk(float64(100 + i)), mk(float64(200 + i))}
+		p2[i] = CompactPair{mk(float64(100 + i)), mk(float64(200 + i))}
 	}
-	got := mergeBitfinexZones(near, broad)
-	for i := range Zones {
-		wantBid := float64(100 + i)
-		if Zones[i].High <= 100 {
-			wantBid = float64(10 + i)
+
+	got := mergeBitfinexZones(p0, p1, p2)
+	if got[0][0] == nil || *got[0][0] != 10 {
+		t.Fatalf("0-100 bid must prefer P0, got=%v", got[0][0])
+	}
+	if got[0][1] == nil || *got[0][1] != 21 {
+		t.Fatalf("0-100 ask must fall back to P1, got=%v", got[0][1])
+	}
+	for i := 1; i < len(Zones); i++ {
+		if got[i][0] == nil || *got[i][0] != float64(100+i) {
+			t.Fatalf("zone=%d bid must remain P2, got=%v", i, got[i][0])
 		}
-		if got[i][0] == nil || *got[i][0] != wantBid {
-			t.Fatalf("zone=%d high=%v got=%v want=%v", i, Zones[i].High, got[i][0], wantBid)
+		if got[i][1] == nil || *got[i][1] != float64(200+i) {
+			t.Fatalf("zone=%d ask must remain P2, got=%v", i, got[i][1])
 		}
 	}
 }
 
+func TestBitfinexNearDoesNotFallBackToP2(t *testing.T) {
+	mk := func(v float64) *float64 { return &v }
+	p2 := make([]CompactPair, len(Zones))
+	for i := range Zones {
+		p2[i] = CompactPair{mk(float64(100 + i)), mk(float64(200 + i))}
+	}
+	got := mergeBitfinexZones(nil, nil, p2)
+	if got[0][0] != nil || got[0][1] != nil {
+		t.Fatalf("0-100 must stay null when both P0 and P1 lack coverage: %#v", got[0])
+	}
+}
 
 func TestBinanceCoverageSeparatesObservedFromBootstrapTrusted(t *testing.T) {
 	s := NewSource("binance", "BTC", "BTCUSDT")

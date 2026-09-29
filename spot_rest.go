@@ -154,15 +154,25 @@ func zonesFromLevels(bids, asks []Level) []CompactPair {
 	return out
 }
 
-func mergeBitfinexZones(near, broad []CompactPair) []CompactPair {
+func mergeBitfinexZones(p0, p1, p2 []CompactPair) []CompactPair {
 	out := make([]CompactPair, len(Zones))
 	for i := range Zones {
-		src := broad
 		if Zones[i].High <= 100 {
-			src = near
+			if len(p0) > i {
+				out[i] = p0[i]
+			}
+			if len(p1) > i {
+				if out[i][0] == nil {
+					out[i][0] = p1[i][0]
+				}
+				if out[i][1] == nil {
+					out[i][1] = p1[i][1]
+				}
+			}
+			continue
 		}
-		if len(src) > i {
-			out[i] = src[i]
+		if len(p2) > i {
+			out[i] = p2[i]
 		}
 	}
 	return out
@@ -526,38 +536,83 @@ func (s *SpotSampler) fetchBitfinex(ctx context.Context, asset string) ([]Compac
 		recv int64
 		err  error
 	}
-	nearCh := make(chan rr, 1)
-	broadCh := make(chan rr, 1)
+	p0Ch := make(chan rr, 1)
+	p1Ch := make(chan rr, 1)
+	p2Ch := make(chan rr, 1)
 	go func() {
 		z, recv, err := s.fetchBitfinexBook(ctx, asset, "P0")
-		nearCh <- rr{z: z, recv: recv, err: err}
+		p0Ch <- rr{z: z, recv: recv, err: err}
+	}()
+	go func() {
+		z, recv, err := s.fetchBitfinexBook(ctx, asset, "P1")
+		p1Ch <- rr{z: z, recv: recv, err: err}
 	}()
 	go func() {
 		z, recv, err := s.fetchBitfinexBook(ctx, asset, "P2")
-		broadCh <- rr{z: z, recv: recv, err: err}
+		p2Ch <- rr{z: z, recv: recv, err: err}
 	}()
-	var near, broad rr
-	for i := 0; i < 2; i++ {
+
+	var p0, p1, p2 rr
+	for i := 0; i < 3; i++ {
 		select {
-		case near = <-nearCh:
-			nearCh = nil
-		case broad = <-broadCh:
-			broadCh = nil
+		case p0 = <-p0Ch:
+			p0Ch = nil
+		case p1 = <-p1Ch:
+			p1Ch = nil
+		case p2 = <-p2Ch:
+			p2Ch = nil
 		case <-ctx.Done():
 			return nil, 0, ctx.Err()
 		}
 	}
-	if near.err != nil {
-		return nil, near.recv, near.err
+
+	// P2 remains the authoritative broad source for >=100 bps so this change
+	// does not alter the existing outer-zone data regime.
+	if p2.err != nil {
+		return nil, p2.recv, p2.err
 	}
-	if broad.err != nil {
-		return nil, broad.recv, broad.err
+	// P0 is preferred for 0-100 bps. P1 is a strictly higher-coverage
+	// fallback and may rescue P0 request failure or a single uncovered side.
+	if p0.err != nil && p1.err != nil {
+		recv := p0.recv
+		if p1.recv > recv {
+			recv = p1.recv
+		}
+		return nil, recv, fmt.Errorf("bitfinex_near p0=%v p1=%v", p0.err, p1.err)
 	}
-	recv := near.recv
-	if broad.recv > recv {
-		recv = broad.recv
+
+	var p0Zones, p1Zones []CompactPair
+	if p0.err == nil {
+		p0Zones = p0.z
 	}
-	return mergeBitfinexZones(near.z, broad.z), recv, nil
+	if p1.err == nil {
+		p1Zones = p1.z
+	}
+	out := mergeBitfinexZones(p0Zones, p1Zones, p2.z)
+
+	// The optional P1 request must not make an otherwise valid P0+P2 sample
+	// look late. Count its receive time only when it actually supplied a
+	// missing 0-100 bps side.
+	usedP1 := false
+	if len(p1Zones) > 0 {
+		for side := 0; side < 2; side++ {
+			var p0Side *float64
+			if len(p0Zones) > 0 {
+				p0Side = p0Zones[0][side]
+			}
+			if p0Side == nil && p1Zones[0][side] != nil {
+				usedP1 = true
+			}
+		}
+	}
+	recv := p2.recv
+	if p0.err == nil && p0.recv > recv {
+		recv = p0.recv
+	}
+	if usedP1 && p1.recv > recv {
+		recv = p1.recv
+	}
+	return out, recv, nil
 }
 
 func (s *SpotSampler) fetch(ctx context.Context, venue, asset string) ([]CompactPair, int64, error) {
