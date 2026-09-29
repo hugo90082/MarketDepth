@@ -82,13 +82,17 @@ GET /api/v1/recent/depth
 GET /api/v1/recent/depth?since=<targetTsMs>
 ```
 
-Minimum accepted Recent polling interval:
+Recent no longer has a dedicated 30-second cooldown.
+
+All authenticated data APIs now share a process-wide rolling rate limit:
 
 ```text
-30 seconds
+maximum 2 accepted requests per rolling 1 second
 ```
 
-Faster accepted calls are rejected with HTTP `429` / `POLL_TOO_FAST`.
+Requests beyond that limit return HTTP `429` / `RATE_LIMIT` with `Retry-After: 1`.
+
+This applies to Recent, Historical index, and Historical chunk downloads so the frontend BFF can hydrate history much faster than the former 30/min + 30-second Recent throttles while still keeping a hard server-side ceiling.
 
 Historical and Recent use the same Spot row schema. Frontends merge on `t = targetTsMs`, with sealed Historical rows authoritative on overlap.
 
@@ -134,7 +138,6 @@ DATA_DIR
 DATASET_DIR
 PACKAGE_DURATION_MS
 PACKAGE_MAX_BYTES
-HISTORY_RATE_PER_MINUTE
 NOTICE_FREE_BYTES
 WARNING_FREE_BYTES
 URGENT_FREE_BYTES
