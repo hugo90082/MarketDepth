@@ -24,16 +24,19 @@ func TestRecentBufferKeepsSixteenMinutes(t *testing.T) {
 	}
 }
 
-func TestCooldownLimiterThirtySeconds(t *testing.T) {
-	l := NewCooldownLimiter(30 * time.Second)
-	if ok, _ := l.AllowAt(1_000); !ok {
+func TestAPILimiterTwoRequestsPerSecond(t *testing.T) {
+	l := NewAPILimiter(2, time.Second)
+	if !l.AllowAt(1_000) {
 		t.Fatal("first request must pass")
 	}
-	if ok, retry := l.AllowAt(30_999); ok || retry != 1 {
-		t.Fatalf("request before 30s must fail: ok=%v retry=%d", ok, retry)
+	if !l.AllowAt(1_100) {
+		t.Fatal("second request inside same rolling second must pass")
 	}
-	if ok, retry := l.AllowAt(31_000); !ok || retry != 0 {
-		t.Fatalf("request at 30s must pass: ok=%v retry=%d", ok, retry)
+	if l.AllowAt(1_200) {
+		t.Fatal("third request inside same rolling second must be rejected")
+	}
+	if !l.AllowAt(2_001) {
+		t.Fatal("request must pass after oldest hit leaves rolling one-second window")
 	}
 }
 
