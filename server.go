@@ -30,20 +30,33 @@ type RuntimeStatus struct {
 }
 
 type APILimiter struct {
-	mu    sync.Mutex
-	hits  []int64
-	limit int
+	mu       sync.Mutex
+	hits     []int64
+	limit    int
+	windowMs int64
 }
 
-func NewAPILimiter(n int) *APILimiter { return &APILimiter{limit: n} }
+func NewAPILimiter(n int, window time.Duration) *APILimiter {
+	if n <= 0 {
+		n = 1
+	}
+	if window <= 0 {
+		window = time.Second
+	}
+	return &APILimiter{limit: n, windowMs: window.Milliseconds()}
+}
+
 func (l *APILimiter) Allow() bool {
-	now := time.Now().UnixMilli()
-	cut := now - 60_000
+	return l.AllowAt(time.Now().UnixMilli())
+}
+
+func (l *APILimiter) AllowAt(now int64) bool {
+	cut := now - l.windowMs
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	j := 0
 	for _, x := range l.hits {
-		if x >= cut {
+		if x > cut {
 			l.hits[j] = x
 			j++
 		}
@@ -121,9 +134,12 @@ func humanBytes(n int64) string {
 
 func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 	mux := http.NewServeMux()
-	lim := NewAPILimiter(cfg.HistoryRatePerMinute)
-	loginLim := NewAPILimiter(10)
-	recentLim := NewCooldownLimiter(recentPollMinInterval)
+	// All authenticated data APIs share one process-wide rolling limiter.
+	// Two requests are accepted in any rolling one-second window. This replaces
+	// the old 30/min global cap and the old 30-second Recent cooldown so the BFF
+	// can hydrate historical chunks without stalling while still bounding load.
+	apiLim := NewAPILimiter(2, time.Second)
+	loginLim := NewAPILimiter(10, time.Minute)
 	isAdmin := func(r *http.Request) bool {
 		c, err := r.Cookie("marketdepth_admin")
 		return err == nil && validSession(cfg.SessionSecret, c.Value)
@@ -236,9 +252,9 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 				io.WriteString(w, `{"ok":false,"error":{"code":"UNAUTHORIZED"}}`)
 				return
 			}
-			if !lim.Allow() {
+			if !apiLim.Allow() {
 				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Retry-After", "60")
+				w.Header().Set("Retry-After", "1")
 				w.WriteHeader(http.StatusTooManyRequests)
 				io.WriteString(w, `{"ok":false,"error":{"code":"RATE_LIMIT"}}`)
 				return
@@ -264,22 +280,6 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 			}
 			since = n
 		}
-		if ok, retryMs := recentLim.Allow(); !ok {
-			retrySec := (retryMs + 999) / 1000
-			if retrySec < 1 {
-				retrySec = 1
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Retry-After", strconv.FormatInt(retrySec, 10))
-			w.WriteHeader(http.StatusTooManyRequests)
-			json.NewEncoder(w).Encode(map[string]any{
-				"ok": false,
-				"error": map[string]any{"code": "POLL_TOO_FAST"},
-				"retryAfterMs": retryMs,
-			})
-			return
-		}
-
 		rows, oldest, latest := rt.Recent.RowsSince(since)
 		now := nowMs()
 		var dataAgeMs any
@@ -293,7 +293,7 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 			stale = age > recentStaleAfter.Milliseconds()
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "private, max-age=30")
+		w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 		json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"data": rows,
@@ -305,7 +305,9 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 				"utcOffset": "+08:00",
 				"cadenceMs": cfg.SpotCadence.Milliseconds(),
 				"bufferMs": recentBufferDuration.Milliseconds(),
-				"pollMinMs": recentPollMinInterval.Milliseconds(),
+				"pollMinMs": int64(0),
+				"rateLimitRequests": 2,
+				"rateLimitWindowMs": int64(1000),
 				"staleAfterMs": recentStaleAfter.Milliseconds(),
 				"oldestAvailableTsMs": oldest,
 				"latestTargetTsMs": latest,
