@@ -18,7 +18,7 @@ func writeMeta(cfg Config) error {
 	m := map[string]any{
 		"schema": SchemaVersion, "spotSchema": SpotSchema, "futuresSchema": FuturesSchema, "eventSchema": EventSchema,
 		"venues": Venues, "assets": Assets, "zonesBps": Zones, "spotCadenceMs": cfg.SpotCadence.Milliseconds(), "futuresCadenceMs": cfg.FuturesCadence.Milliseconds(),
-		"timezone": "Asia/Taipei", "utcOffset": "+08:00", "historyAPI": "sealed immutable spot chunks + 16m recent window", "recentAPI": "/api/v1/recent/depth", "recentBufferMs": recentBufferDuration.Milliseconds(), "recentPollMinMs": recentPollMinInterval.Milliseconds(), "all4Stored": false,
+		"timezone": "Asia/Taipei", "utcOffset": "+08:00", "historyAPI": "sealed immutable spot chunks + 16m recent window", "recentAPI": "/api/v1/recent/depth", "recentBufferMs": recentBufferDuration.Milliseconds(), "recentPollMinMs": int64(0), "apiRateLimitRequests": 2, "apiRateLimitWindowMs": int64(1000), "all4Stored": false,
 		"depthUnit": DepthUnit, "quoteToUSDPolicy": QuoteToUSDPolicy,
 		"spotAcquisition": "synchronized_30s_hybrid", "spotRequestLeadMs": spotRequestLead.Milliseconds(), "spotAcceptWindowMs": spotAcceptWindow.Milliseconds(),
 		"spotSources": map[string]string{"binance": "BTC/ETH local book: REST5000 bootstrap + diff-depth 1000ms + U/u bridge; exact-T cut; persistent book bounded to trusted bootstrap price edges; adaptive edge-headroom refresh plus periodic 15m rebootstrap; SOL one REST5000 snapshot", "coinbase": "one full level2 REST snapshot per 30s row", "kraken": "exact WS depth=1000 plus BTC/ETH GroupedBook depth=1000 grouping=1000 filling only uncovered zone sides; REST500 failure fallback", "bitfinex": "P0 near + P2 broad REST snapshots per 30s row"},
