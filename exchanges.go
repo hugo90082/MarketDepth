@@ -141,29 +141,6 @@ func mapLevels(m map[float64]float64) []Level {
 	return r
 }
 
-// pruneBinanceMapsToTrusted rebuilds the local bootstrap maps using only the
-// absolute price interval proven complete by REST5000. Rebuilding (rather than
-// deleting in-place) lets Go release oversized map bucket arrays after a later GC.
-func pruneBinanceMapsToTrusted(bids, asks map[float64]float64, bidEdge, askEdge float64) (map[float64]float64, map[float64]float64) {
-	nb := make(map[float64]float64, len(bids))
-	na := make(map[float64]float64, len(asks))
-	if bidEdge > 0 {
-		for p, q := range bids {
-			if q > 0 && p >= bidEdge {
-				nb[p] = q
-			}
-		}
-	}
-	if askEdge > 0 {
-		for p, q := range asks {
-			if q > 0 && p <= askEdge {
-				na[p] = q
-			}
-		}
-	}
-	return nb, na
-}
-
 func binanceDeltaLevels(e timedBin) ([]Level, []Level) {
 	bids := make([]Level, 0, len(e.msg.B))
 	asks := make([]Level, 0, len(e.msg.A))
