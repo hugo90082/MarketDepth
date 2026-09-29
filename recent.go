@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	recentBufferDuration  time.Duration = 16 * time.Minute
-	recentPollMinInterval time.Duration = 30 * time.Second
-	recentStaleAfter      time.Duration = 60 * time.Second
+	recentBufferDuration time.Duration = 16 * time.Minute
+	recentStaleAfter     time.Duration = 60 * time.Second
 )
 
 type RecentBuffer struct {
@@ -155,28 +154,4 @@ func (b *RecentBuffer) RebuildFromStore(s *Store, now int64) error {
 	}
 	b.Replace(rows)
 	return nil
-}
-
-type CooldownLimiter struct {
-	mu            sync.Mutex
-	minInterval   time.Duration
-	nextAllowedMs int64
-}
-
-func NewCooldownLimiter(minInterval time.Duration) *CooldownLimiter {
-	return &CooldownLimiter{minInterval: minInterval}
-}
-
-func (l *CooldownLimiter) Allow() (bool, int64) {
-	return l.AllowAt(time.Now().UnixMilli())
-}
-
-func (l *CooldownLimiter) AllowAt(now int64) (bool, int64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if now < l.nextAllowedMs {
-		return false, l.nextAllowedMs - now
-	}
-	l.nextAllowedMs = now + l.minInterval.Milliseconds()
-	return true, 0
 }
