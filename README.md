@@ -119,7 +119,7 @@ The proven transport approach is retained while the decision cadence changes to 
 - Binance SOL: REST5000 snapshot.
 - Coinbase: full Level-2 REST snapshot.
 - Kraken: exact WebSocket depth=1000; BTC/ETH also use GroupedBook only to fill uncovered sides/zones; REST fallback remains.
-- Bitfinex: P1 is the fixed source for 0–100 bps and P2 is the fixed source for 100–750 bps. P0 is not requested. This keeps the near-zone precision regime constant across rows while preserving the existing outer-zone P2 regime. The stored schema and zone boundaries do not change.
+- Bitfinex: P1 is the fixed source for 0–100 bps and P2 is the fixed source for 100–750 bps. P0 is not requested. This keeps the near-zone precision regime constant across rows while preserving the existing outer-zone P2 regime. The stored schema and zone boundaries do not change. This fixed P1/P2 mapping is the production acquisition policy.
 
 No future data are used for a target row.
 
