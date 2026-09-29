@@ -17,10 +17,12 @@ type Level struct{ Price, Qty float64 }
 type BookEvent struct {
 	RecvMs     int64
 	Role       string // near,broad,both
-	Kind       string // replace,level,delta,status,touch
+	Kind       string // replace,refresh,level,delta,status,touch
 	Side       Side
 	Price, Qty float64
 	Bids, Asks []Level
+	BidEdge    float64
+	AskEdge    float64
 	Connected  *bool
 	Status     string
 }
@@ -35,6 +37,38 @@ func NewBook() *Book { return &Book{bids: map[float64]float64{}, asks: map[float
 func (b *Book) Replace(bids, asks []Level) {
 	b.bids = map[float64]float64{}
 	b.asks = map[float64]float64{}
+	for _, x := range bids {
+		if x.Qty > 0 {
+			b.bids[x.Price] = x.Qty
+		}
+	}
+	for _, x := range asks {
+		if x.Qty > 0 {
+			b.asks[x.Price] = x.Qty
+		}
+	}
+	b.ready = true
+}
+
+func (b *Book) RefreshRange(bids, asks []Level, bidEdge, askEdge float64) {
+	// REST5000 proves the current book is complete only inside its absolute
+	// snapshot interval. Replace that interval authoritatively while retaining
+	// sequence-maintained observed levels outside it for the RAM/full-retention
+	// experiment.
+	if bidEdge > 0 {
+		for p := range b.bids {
+			if p >= bidEdge {
+				delete(b.bids, p)
+			}
+		}
+	}
+	if askEdge > 0 {
+		for p := range b.asks {
+			if p <= askEdge {
+				delete(b.asks, p)
+			}
+		}
+	}
 	for _, x := range bids {
 		if x.Qty > 0 {
 			b.bids[x.Price] = x.Qty
@@ -255,6 +289,16 @@ func (s *SourceState) apply(e BookEvent) {
 		}
 		if e.Role == "broad" || e.Role == "both" {
 			s.broad.Replace(e.Bids, e.Asks)
+		}
+		t := true
+		s.markRole(e.Role, &t, "OK", e.RecvMs)
+		s.markDataRole(e.Role, e.RecvMs)
+	case "refresh":
+		if e.Role == "near" || e.Role == "both" {
+			s.near.RefreshRange(e.Bids, e.Asks, e.BidEdge, e.AskEdge)
+		}
+		if e.Role == "broad" || e.Role == "both" {
+			s.broad.RefreshRange(e.Bids, e.Asks, e.BidEdge, e.AskEdge)
 		}
 		t := true
 		s.markRole(e.Role, &t, "OK", e.RecvMs)
