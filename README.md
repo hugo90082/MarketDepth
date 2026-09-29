@@ -119,7 +119,7 @@ The proven transport approach is retained while the decision cadence changes to 
 - Binance SOL: REST5000 snapshot.
 - Coinbase: full Level-2 REST snapshot.
 - Kraken: exact WebSocket depth=1000; BTC/ETH also use GroupedBook only to fill uncovered sides/zones; REST fallback remains.
-- Bitfinex: P0 remains primary for 0–100 bps; P1 is fetched in parallel and fills only a P0 side that cannot prove full 0–100 bps coverage (or rescues a failed P0 request). P2 remains authoritative for 100–750 bps so the existing outer-zone data regime is unchanged.
+- Bitfinex: P0 remains primary for 0–100 bps; P1 is fetched in parallel and fills only a P0 side that cannot prove full 0–100 bps coverage (or rescues a failed P0 request). P2 remains authoritative for 100–750 bps so the existing outer-zone data regime is unchanged. This is a coverage fallback only; the stored schema and zone boundaries do not change.
 
 No future data are used for a target row.
 
