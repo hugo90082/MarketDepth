@@ -171,11 +171,11 @@ paths:
                       currentIndexVersion: { type: integer, format: int64 }
                       indexUpdatedTsMs: { type: integer, format: int64 }
         "429":
-          description: Global API rate limit
+          description: Global authenticated data API rate limit; maximum 2 accepted requests per rolling 1 second
           headers:
             Retry-After:
               schema: { type: integer }
-              description: Retry delay in seconds; currently 60.
+              description: Retry delay in seconds; currently 1.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorBody" }
@@ -196,7 +196,7 @@ paths:
         "401":
           description: UNAUTHORIZED
         "429":
-          description: POLL_TOO_FAST or RATE_LIMIT
+          description: RATE_LIMIT; maximum 2 accepted requests per rolling 1 second
           headers:
             Retry-After:
               schema: { type: integer }
@@ -233,7 +233,7 @@ paths:
         "404":
           description: Unknown chunk.
         "429":
-          description: Global API rate limit.
+          description: Global authenticated data API rate limit; maximum 2 accepted requests per rolling 1 second.
           headers:
             Retry-After:
               schema: { type: integer }
