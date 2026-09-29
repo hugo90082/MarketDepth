@@ -401,7 +401,6 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 		emit(EventRecord{T: boot.avail, Venue: "binance", Asset: asset, Type: "reset_done", Gaps: g, Resets: r, Recovered: true})
 
 		last := boot.last
-		trustedBidEdge, trustedAskEdge := boot.trustedBid, boot.trustedAsk
 		bidFloor := binanceRefreshFloor(boot.initialBidBps)
 		askFloor := binanceRefreshFloor(boot.initialAskBps)
 		bootAt := time.Now()
@@ -497,7 +496,6 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 				})
 				fresh.bids, fresh.asks = nil, nil
 				s.ResetCount()
-				trustedBidEdge, trustedAskEdge = fresh.trustedBid, fresh.trustedAsk
 				last = fresh.last
 				bidFloor = binanceRefreshFloor(fresh.initialBidBps)
 				askFloor = binanceRefreshFloor(fresh.initialAskBps)
