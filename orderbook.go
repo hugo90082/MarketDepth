@@ -379,17 +379,12 @@ func (s *SourceState) snapshotZonesLocked(target int64, maxAgeMs int64) []Compac
 		if book == nil {
 			continue
 		}
-		if s.Venue == "binance" && book == s.broad {
-			// Binance diff-depth can reveal isolated levels beyond the REST5000
-			// bootstrap edge, but that does not prove that every untouched price
-			// between the bootstrap edge and the new level was known. Therefore
-			// only the last complete bootstrap edges may authorize a zone side.
-			mid := book.Mid()
-			tb, ta := s.trustedCoverageLocked(mid)
-			out[i] = book.zoneWithCoverage(z, tb, ta)
-		} else {
-			out[i] = book.Zone(z)
-		}
+		// Production collection uses the causally maintained local book for
+		// zone values. For Binance BTC/ETH that book starts from REST5000 and is
+		// continuously extended/updated by sequence-valid diff-depth events.
+		// REST bootstrap edges remain available in CoverageAudit as a separate
+		// quality diagnostic; they no longer suppress observed 0-750 bps values.
+		out[i] = book.Zone(z)
 	}
 	return out
 }
@@ -497,7 +492,10 @@ func (s *SourceState) CoverageAudit(target int64) CoverageAudit {
 	if len(Zones) > 0 {
 		targetBps = Zones[len(Zones)-1].High
 	}
-	bidReached, askReached := tb+1e-9 >= targetBps, ta+1e-9 >= targetBps
+	// Target reach follows the same observed local-book coverage used by
+	// production zone emission. Trusted REST coverage is still reported
+	// separately in TrustedBid / TrustedAsk for audit and research filtering.
+	bidReached, askReached := ob+1e-9 >= targetBps, oa+1e-9 >= targetBps
 	return CoverageAudit{
 		Ready: true, Connected: s.broadConnected, AgeMs: age, DepthAgeMs: depthAge,
 		ObservedBid: ob, ObservedAsk: oa, TrustedBid: tb, TrustedAsk: ta,
