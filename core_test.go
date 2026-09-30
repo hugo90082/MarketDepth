@@ -332,7 +332,7 @@ func TestBinanceCoverageSeparatesObservedFromBootstrapTrusted(t *testing.T) {
 	}
 }
 
-func TestBinanceOuterDiffCannotExpandTrustedZoneValidity(t *testing.T) {
+func TestBinanceOuterDiffFeedsObservedZoneValidityAndKeepsTrustedAudit(t *testing.T) {
 	s := NewSource("binance", "BTC", "BTCUSDT")
 	s.SetCutoff(10_000)
 
@@ -343,18 +343,16 @@ func TestBinanceOuterDiffCannotExpandTrustedZoneValidity(t *testing.T) {
 	})
 	s.SetTrustedEdges(98.5, 101.5)
 
-	// Later isolated diff levels appear much farther away. These expand observed
-	// coverage only; they do not prove the untouched interval is complete.
+	// Sequence-valid diff levels extend the production local book. Production
+	// zone emission follows this observed book, while the original REST5000
+	// edges remain separately available as trusted-quality diagnostics.
 	s.Enqueue(BookEvent{RecvMs: 2000, Role: "broad", Kind: "level", Side: Bid, Price: 90, Qty: 2})
 	s.Enqueue(BookEvent{RecvMs: 2000, Role: "broad", Kind: "level", Side: Ask, Price: 110, Qty: 2})
 
 	out := s.SnapshotZones(2000, 45_000)
-	if out[0][0] == nil || out[0][1] == nil {
-		t.Fatalf("trusted 0-100 bps zone must remain valid: %#v", out[0])
-	}
-	for i := 1; i < len(Zones); i++ {
-		if out[i][0] != nil || out[i][1] != nil {
-			t.Fatalf("outer diff must not authorize zone %d beyond trusted bootstrap coverage: %#v", i, out[i])
+	for i := range Zones {
+		if out[i][0] == nil || out[i][1] == nil {
+			t.Fatalf("observed local book must authorize collected zone %d: %#v", i, out[i])
 		}
 	}
 
@@ -362,8 +360,8 @@ func TestBinanceOuterDiffCannotExpandTrustedZoneValidity(t *testing.T) {
 	if a.ObservedBid <= a.TrustedBid || a.ObservedAsk <= a.TrustedAsk {
 		t.Fatalf("expected observed coverage to exceed trusted coverage: %#v", a)
 	}
-	if a.TargetBidReached || a.TargetAskReached || a.TargetBothReached {
-		t.Fatalf("target coverage flags must use trusted coverage, not observed: %#v", a)
+	if !a.TargetBidReached || !a.TargetAskReached || !a.TargetBothReached {
+		t.Fatalf("target coverage flags must follow production observed coverage: %#v", a)
 	}
 }
 
@@ -423,8 +421,8 @@ func TestOuterBinanceDeltaGrowsObservedBookButNotTrusted(t *testing.T) {
 	if after.ObservedBid <= after.TrustedBid || after.ObservedAsk <= after.TrustedAsk {
 		t.Fatalf("observed coverage should exceed trusted coverage after outer levels: %#v", after)
 	}
-	if after.TargetBidReached || after.TargetAskReached || after.TargetBothReached {
-		t.Fatalf("outer observed levels must not authorize trusted target coverage: %#v", after)
+	if !after.TargetBidReached || !after.TargetAskReached || !after.TargetBothReached {
+		t.Fatalf("outer observed levels must authorize production target coverage: %#v", after)
 	}
 	if after.DepthAgeMs != 0 {
 		t.Fatalf("sequence-valid delta must refresh depth age: %#v", after)
