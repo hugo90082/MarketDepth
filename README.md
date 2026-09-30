@@ -115,7 +115,7 @@ The token is intended to remain server-side behind the frontend BFF; do not expo
 
 The proven transport approach is retained while the decision cadence changes to 30 seconds:
 
-- Binance BTC/ETH: persistent local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut. Zone-side validity is authorized only by the latest complete REST5000 bootstrap trusted bid/ask edges. During the current RAM experiment, all sequence-valid diff levels are retained as observed-only local-book state, including levels outside trusted REST edges. Those outer levels never authorize zone validity. Zero-quantity updates still delete cancelled/removed levels. A normal rebootstrap refreshes the newly proven REST interval without discarding sequence-maintained outer observations; a true disconnect or sequence gap rebuilds from a clean snapshot.
+- Binance BTC/ETH: persistent production local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut. Sequence-valid diff updates extend and maintain the observed local book beyond the initial REST5000 edge, and the stored 0–750 bps zone values are calculated from that causally maintained observed book. REST5000 trusted bid/ask edges are retained separately as audit/quality diagnostics; they no longer suppress observed outer-zone values. Zero-quantity updates delete cancelled/removed levels. A normal rebootstrap refreshes the newly proven REST interval without discarding sequence-maintained outer observations; a true disconnect or sequence gap rebuilds from a clean snapshot.
 - Binance SOL: REST5000 snapshot.
 - Coinbase: full Level-2 REST snapshot.
 - Kraken: exact WebSocket depth=1000; BTC/ETH also use GroupedBook only to fill uncovered sides/zones; REST fallback remains.
@@ -191,30 +191,39 @@ MD-PACKAGE-3
 ```
 
 
-## Binance trusted-coverage rule
+## Binance observed-book collection and trusted audit
 
-For Binance BTC/ETH, the local order book can contain price levels learned later from WebSocket diff-depth updates beyond the original REST5000 bootstrap range. Those isolated outer levels do **not** prove that every untouched price level in between was known.
+For Binance BTC/ETH, production depth collection uses the causally maintained local order book built from:
+
+```text
+REST5000 bootstrap
++ sequence-valid diff-depth WebSocket updates
++ U/u continuity checks
+```
+
+The collector stores 0–750 bps zone values from the **observed local book** once the observed bid/ask book reaches the requested zone edge.
+
+REST5000 still defines separate `trustedBidBps` / `trustedAskBps` diagnostics. These values describe the range directly proven complete by the latest REST snapshot and are retained for audit/research filtering, but they no longer force outer observed zones to `null`.
 
 Therefore:
 
 ```text
-zone validity = latest complete REST5000 bootstrap trusted edge coverage
-outer diff level = book update only, never new coverage evidence
+production stored zone validity = observed local-book coverage
+trusted REST coverage           = separate quality/audit signal
 ```
 
-Bid and Ask are evaluated independently. If a zone side exceeds the trusted bootstrap edge, that side is stored as `null`, even when farther observed diff levels exist.
-
+A disconnect or U/u sequence gap invalidates continuity and forces a clean bootstrap before collection resumes.
 
 ## Binance local-book memory bound
 
-The BTC/ETH persistent Binance books are intentionally bounded to the latest REST5000 trusted absolute price interval. To prevent a fixed absolute interval from becoming stale as price moves, the collector automatically re-bootstraps when either trusted side approaches an adaptive headroom floor and also at least every 15 minutes:
+The BTC/ETH persistent Binance books retain sequence-maintained observed levels beyond the latest REST5000 trusted absolute price interval. The collector still re-bootstraps when either trusted side approaches an adaptive headroom floor and also at least every 15 minutes:
 
 ```text
 bid: keep price >= trustedBidEdge
 ask: keep price <= trustedAskEdge
 ```
 
-Current experiment: WebSocket diff messages outside the latest trusted REST interval are retained in memory as observed-only levels to measure real RAM growth when the collector does not prune outer prices. They still do not expand trusted coverage. Qty=0 updates continue to remove levels because retaining cancelled orders would make the book invalid and would measure artificial garbage rather than real active-book memory. Periodic/adaptive REST5000 refreshes replace only the REST-proven absolute interval while keeping sequence-maintained outer observations. A disconnect or sequence gap invalidates that continuity and therefore resets to a clean snapshot. Reconnect/bootstrap failures use exponential backoff (up to 30 seconds) instead of hammering REST.
+WebSocket diff messages outside the latest trusted REST interval are retained as part of the production observed local book and can contribute to stored 0–750 bps zone values. Trusted REST coverage is still tracked separately for diagnostics. Qty=0 updates remove cancelled orders. Periodic/adaptive REST5000 refreshes replace the REST-proven absolute interval while keeping sequence-maintained outer observations. A disconnect or sequence gap invalidates that continuity and therefore resets to a clean snapshot. Reconnect/bootstrap failures use exponential backoff (up to 30 seconds) instead of hammering REST.
 
 Runtime status logs include:
 
@@ -226,4 +235,4 @@ stackInuseBytes
 numGC
 ```
 
-This optimization changes only in-memory retention and observability. It does not change the Spot schema, Historical data contract, or trusted-coverage validity semantics.
+This policy does not change the Spot schema or Historical row shape. It changes Binance BTC/ETH outer-zone emission semantics so sequence-maintained observed depth can be stored through 750 bps while trusted REST coverage remains available as a separate audit signal.
