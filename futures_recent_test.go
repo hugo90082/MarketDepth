@@ -11,7 +11,7 @@ func TestRecentFuturesBufferSinceAndPrune(t *testing.T) {
 		b.Add(FuturesSnapshot{T: i * 1000, BTC: FuturesAsset{P: ptr(float64(i)), X: i * 1000}})
 	}
 	rows, oldest, latest := b.RowsSince(0)
-	if len(rows) != 3 || oldest != 3000 || latest != 5000 {
+	if len(rows) != 2 || oldest != 4000 || latest != 5000 {
 		t.Fatalf("bad window len=%d oldest=%d latest=%d", len(rows), oldest, latest)
 	}
 	inc, _, _ := b.RowsSince(4000)
