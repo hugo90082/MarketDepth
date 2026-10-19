@@ -69,7 +69,6 @@ func main() {
 		log.Printf("recent-buffer-rebuild rows=%d oldest=%d latest=%d", len(rows), oldest, latest)
 	}
 	rt.Recent = recent
-	rt.RecentFutures = NewRecentFuturesBuffer(recentBufferDuration)
 	emit := func(e EventRecord) {
 		if e.T == 0 {
 			e.T = nowMs()
@@ -174,9 +173,6 @@ func futuresLoop(ctx context.Context, cfg Config, store *Store, rt *RuntimeStatu
 			}
 		} else {
 			rt.FuturesRows.Add(1)
-			if rt.RecentFutures != nil {
-				rt.RecentFutures.Add(row)
-			}
 		}
 		next = next.Add(time.Second)
 	}
@@ -228,19 +224,6 @@ func statusLoop(ctx context.Context, cfg Config, store *Store, rt *RuntimeStatus
 			var ms runtime.MemStats
 			runtime.ReadMemStats(&ms)
 			log.Printf("marketdepth-status uptimeSec=%d spotRows=%d futuresRows=%d eventRows=%d diskTotal=%d diskUsed=%d diskFree=%d pressure=%s lastFlushMs=%d heapAllocBytes=%d heapInuseBytes=%d heapSysBytes=%d stackInuseBytes=%d numGC=%d lastError=%q", (nowMs()-rt.StartedMs)/1000, rt.SpotRows.Load(), rt.FuturesRows.Load(), rt.EventRows.Load(), total, used, free, pressure(cfg, free), store.LastFlush(), ms.HeapAlloc, ms.HeapInuse, ms.HeapSys, ms.StackInuse, ms.NumGC, errStr)
-			if rt.RecentFutures != nil {
-				rows, _, _ := rt.RecentFutures.RowsSince(nowMs() - 2_000)
-				if len(rows) > 0 {
-					last := rows[len(rows)-1]
-					// This audit distinguishes actual non-null prices from the
-					// count of futures rows successfully written to disk.
-					if b, err := json.Marshal(map[string]any{
-						"t": last.T, "BTC": last.BTC, "ETH": last.ETH, "SOL": last.SOL,
-					}); err == nil {
-						log.Printf("futures-price-audit %s", b)
-					}
-				}
-			}
 			if rt.Feeds != nil {
 				t := nowMs()
 				cov := map[string]CoverageAudit{}

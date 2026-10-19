@@ -493,32 +493,24 @@ func runBinanceFutures(ctx context.Context, f map[string]*FutureState, emit Even
 		if ctx.Err() != nil {
 			return
 		}
-		c, _, err := websocket.DefaultDialer.DialContext(ctx, "wss://fstream.binance.com/market/stream?streams="+strings.Join(streams, "/"), nil)
+		c, _, err := websocket.DefaultDialer.DialContext(ctx, "wss://fstream.binance.com/stream?streams="+strings.Join(streams, "/"), nil)
 		if err != nil {
-			log.Printf("binance-futures websocket_dial_failed err=%v", err)
-			sleepCtx(ctx, 5*time.Second)
+			sleepCtx(ctx, time.Second)
 			continue
 		}
-		log.Printf("binance-futures websocket_connected streams=BTC,ETH,SOL endpoint=/market/stream")
-		// Binance USDⓈ-M trades are active nearly continuously. Reconnect if
-		// a successful TCP/WebSocket upgrade yields no valid stream traffic.
-		_ = c.SetReadDeadline(time.Now().Add(20 * time.Second))
 		for {
 			_, b, e := c.ReadMessage()
 			if e != nil {
 				c.Close()
-				log.Printf("binance-futures websocket_disconnected err=%v", e)
 				emit(EventRecord{T: nowMs(), Venue: "binance_futures", Asset: "ALL", Type: "disconnect", Reason: e.Error()})
 				break
 			}
 			recv := nowMs()
-			_ = c.SetReadDeadline(time.Now().Add(20 * time.Second))
 			var m struct {
 				Data struct {
 					Symbol  string `json:"s"`
 					Price   string `json:"p"`
 					TradeMs int64  `json:"T"`
-					Market  int    `json:"st"`
 				} `json:"data"`
 			}
 			if json.Unmarshal(b, &m) != nil {
@@ -533,15 +525,10 @@ func runBinanceFutures(ctx context.Context, f map[string]*FutureState, emit Even
 			case "SOLUSDT":
 				asset = "SOL"
 			}
-			if asset == "" || m.Data.Market != 1 {
-				// Post-2026 Binance merged futures streams include st=1 for
-				// USDⓈ-M and st=2 for COIN-M. Never mix these markets.
+			if asset == "" {
 				continue
 			}
-			p, priceErr := strconv.ParseFloat(m.Data.Price, 64)
-			if priceErr != nil || p <= 0 || m.Data.TradeMs <= 0 {
-				continue
-			}
+			p, _ := strconv.ParseFloat(m.Data.Price, 64)
 			f[asset].Add(TradeEvent{RecvMs: recv, ExchangeMs: m.Data.TradeMs, Price: p})
 		}
 		sleepCtx(ctx, time.Second)
