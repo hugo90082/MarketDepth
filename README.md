@@ -75,6 +75,21 @@ Meaning:
 
 ## Recent API
 
+**Futures price feed (new):** `GET /api/v1/recent/futures` and
+`GET /api/v1/recent/futures?since=<lastTargetTsMs>` are available with the same
+server-side Bearer token and the same shared 2-requests-per-rolling-second limit.
+The response includes one-second `MD-FUTURES-1S-1` rows (`t`, `a`,
+`BTC:{p,x}`, `ETH:{p,x}`, `SOL:{p,x}`) and `latest` separately from
+incremental `data`. Here `p` is a Binance USDⓈ-M perpetual last trade
+price or `null` if not available; `x` is the exchange trade timestamp.
+This fixes the prior lack of a public Futures price API. The endpoint is a
+live in-memory window, initially empty after restart, then populated each
+second. Sealed historical Futures data remains in the existing download
+packages; the Historical depth API is still Spot-only. Do not turn missing
+Futures prices into zero or silently substitute Spot/mark prices.
+
+
+
 Recent Spot rows are kept in a **16-minute** in-memory buffer and rebuilt from sealed/open storage after restart.
 
 ```http

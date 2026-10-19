@@ -495,13 +495,16 @@ func runBinanceFutures(ctx context.Context, f map[string]*FutureState, emit Even
 		}
 		c, _, err := websocket.DefaultDialer.DialContext(ctx, "wss://fstream.binance.com/stream?streams="+strings.Join(streams, "/"), nil)
 		if err != nil {
-			sleepCtx(ctx, time.Second)
+			log.Printf("binance-futures websocket_dial_failed err=%v", err)
+			sleepCtx(ctx, 5*time.Second)
 			continue
 		}
+		log.Printf("binance-futures websocket_connected streams=BTC,ETH,SOL")
 		for {
 			_, b, e := c.ReadMessage()
 			if e != nil {
 				c.Close()
+				log.Printf("binance-futures websocket_disconnected err=%v", e)
 				emit(EventRecord{T: nowMs(), Venue: "binance_futures", Asset: "ALL", Type: "disconnect", Reason: e.Error()})
 				break
 			}

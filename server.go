@@ -27,6 +27,7 @@ type RuntimeStatus struct {
 	LastError   atomic.Value
 	Feeds       *Feeds
 	Recent      *RecentBuffer
+	RecentFutures *RecentFuturesBuffer
 }
 
 type APILimiter struct {
@@ -313,6 +314,62 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 				"latestTargetTsMs": latest,
 				"dataAgeMs": dataAgeMs,
 				"stale": stale,
+			},
+		})
+	}))
+	mux.HandleFunc("/api/v1/recent/futures", authAPI(func(w http.ResponseWriter, r *http.Request) {
+		if rt.RecentFutures == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			io.WriteString(w, "{\"ok\":false,\"error\":{\"code\":\"FUTURES_UNAVAILABLE\"}}")
+			return
+		}
+		since := int64(0)
+		if raw := r.URL.Query().Get("since"); raw != "" {
+			n, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || n < 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				io.WriteString(w, "{\"ok\":false,\"error\":{\"code\":\"BAD_SINCE\"}}")
+				return
+			}
+			since = n
+		}
+		rows, oldest, latest := rt.RecentFutures.RowsSince(since)
+		now := nowMs()
+		var lastRow any
+		var ageMs any
+		stale := true
+		if latest > 0 {
+			age := now - latest
+			if age < 0 {
+				age = 0
+			}
+			ageMs = age
+			stale = age > 5_000
+			// latest is reported independently of since, so clients do not
+			// mistake "no new rows" for a missing latest price.
+			all, _, _ := rt.RecentFutures.RowsSince(latest - 1)
+			if len(all) > 0 {
+				lastRow = all[len(all)-1]
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"data": rows,
+			"latest": lastRow,
+			"meta": map[string]any{
+				"schema": FuturesSchema,
+				"venue": "binance", "market": "USDⓈ-M perpetual",
+				"assets": Assets,
+				"timezone": "Asia/Taipei", "utcOffset": "+08:00",
+				"cadenceMs": cfg.FuturesCadence.Milliseconds(),
+				"bufferMs": recentBufferDuration.Milliseconds(),
+				"oldestAvailableTsMs": oldest, "latestTargetTsMs": latest,
+				"dataAgeMs": ageMs, "stale": stale,
+				"rateLimitRequests": 2, "rateLimitWindowMs": int64(1000),
 			},
 		})
 	}))
