@@ -61,6 +61,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rt := &RuntimeStatus{StartedMs: time.Now().UnixMilli()}
+	// Read-only check of actual on-disk, sealed one-second Futures files.
+	// No package, API, or historical row mutation is performed.
+	auditSavedFuturesFiles(cfg.DatasetDir)
 	recent := NewRecentBuffer(recentBufferDuration)
 	if err := recent.RebuildFromStore(store, nowMs()); err != nil {
 		log.Printf("recent-buffer-rebuild warning=%v", err)
@@ -167,6 +170,11 @@ func futuresLoop(ctx context.Context, cfg Config, store *Store, rt *RuntimeStatu
 		t := next.UnixMilli()
 		nextTarget := next.Add(cfg.FuturesCadence).UnixMilli()
 		row := FuturesSnapshot{T: t, A: nowMs(), BTC: feeds.Futures["BTC"].AtAdvance(t, nextTarget), ETH: feeds.Futures["ETH"].AtAdvance(t, nextTarget), SOL: feeds.Futures["SOL"].AtAdvance(t, nextTarget)}
+		if t%60_000 == 0 {
+			log.Printf("futures-live-audit t=%d BTC=%v ETH=%v SOL=%v btcTradeMs=%d ethTradeMs=%d solTradeMs=%d", t,
+				row.BTC.P != nil && *row.BTC.P > 0, row.ETH.P != nil && *row.ETH.P > 0, row.SOL.P != nil && *row.SOL.P > 0,
+				row.BTC.X, row.ETH.X, row.SOL.X)
+		}
 		if err := store.Add("futures", t, row); err != nil {
 			if !errors.Is(err, ErrStorageStopped) {
 				rt.LastError.Store(err.Error())
