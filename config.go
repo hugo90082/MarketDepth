@@ -15,16 +15,15 @@ var (
 )
 
 const (
-	DefaultSpotCadence = 30 * time.Second
+	DefaultSpotCadence = 60 * time.Second
 
-	SchemaVersion      = "MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_3"
-	SpotSchema         = "MD-SPOT-30S-USD-3"
-	FuturesSchema      = "MD-FUTURES-1S-1"
-	EventSchema        = "MD-EVENT-1"
+	SchemaVersion      = "MARKET_DEPTH_COLLECTION_60S_5ZONE_USD_1"
+	SpotSchema         = "MD-SPOT-60S-USD-1"
+		EventSchema        = "MD-EVENT-1"
 	PackageSchema      = "MD-PACKAGE-3"
 	HistoryIndexSchema = "MD-HISTORY-INDEX-3"
 	SpotAuditSchema    = "MD-SPOT-AUDIT-3"
-	DatasetFormat      = "MARKET_DEPTH_USD_NOTIONAL_TRUSTED_COVERAGE_V2"
+	DatasetFormat      = "MARKET_DEPTH_SPOT_ONLY_60S_5ZONE_USD_V3"
 	DepthUnit          = "USD_NOTIONAL"
 	QuoteToUSDPolicy   = "RAW_QUOTE_PRICE_ASSUMED_USD_1_TO_1_NO_FX"
 )
@@ -37,8 +36,6 @@ type Config struct {
 	SessionSecret        string
 	HistoryToken         string
 	SpotCadence          time.Duration
-	FuturesCadence       time.Duration
-	FinalizeDelay        time.Duration
 	ChunkDuration        time.Duration
 	PackageDuration      time.Duration
 	PackageMaxBytes      int64
@@ -73,7 +70,7 @@ func LoadConfig() Config {
 	return Config{
 		DataDir: data, DatasetDir: ds, Port: p,
 		AdminPassword: os.Getenv("ADMIN_PASSWORD"), SessionSecret: os.Getenv("SESSION_SECRET"), HistoryToken: os.Getenv("HISTORY_READ_TOKEN"),
-		SpotCadence: DefaultSpotCadence, FuturesCadence: time.Second, FinalizeDelay: 100 * time.Millisecond,
+		SpotCadence: DefaultSpotCadence,
 		ChunkDuration: 15 * time.Minute, PackageDuration: time.Duration(envInt64("PACKAGE_DURATION_MS", int64((12*time.Hour)/time.Millisecond))) * time.Millisecond,
 		PackageMaxBytes: envInt64("PACKAGE_MAX_BYTES", 60_000_000),
 		NoticeFreeBytes:    envInt64("NOTICE_FREE_BYTES", 150_000_000), WarningFreeBytes: envInt64("WARNING_FREE_BYTES", 100_000_000),

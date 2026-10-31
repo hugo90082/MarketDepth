@@ -22,7 +22,6 @@ import (
 type RuntimeStatus struct {
 	StartedMs   int64
 	SpotRows    atomic.Uint64
-	FuturesRows atomic.Uint64
 	EventRows   atomic.Uint64
 	LastError   atomic.Value
 	Feeds       *Feeds
@@ -106,7 +105,7 @@ func validSession(secret, val string) bool {
 }
 
 var loginTpl = template.Must(template.New("login").Parse(`<!doctype html><meta charset="utf-8"><title>MarketDepth</title><style>body{font-family:system-ui;max-width:520px;margin:60px auto;padding:0 20px}input,button{font-size:16px;padding:10px;margin:5px 0;width:100%;box-sizing:border-box}.e{color:#b00}</style><h1>MarketDepth</h1>{{if .}}<p class=e>{{.}}</p>{{end}}<form method=post action=/login><input type=password name=password placeholder="Admin password" autofocus><button>Login</button></form>`))
-var dashTpl = template.Must(template.New("dash").Parse(`<!doctype html><meta charset="utf-8"><title>MarketDepth</title><style>body{font-family:system-ui;max-width:1050px;margin:30px auto;padding:0 18px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left}button{padding:6px 10px}.ok{color:#087}.warn{color:#b60}code{font-size:14px}</style><h1>MarketDepth</h1><p>Schema: <code>{{.Schema}}</code></p><p>Uptime: {{.Uptime}} | Spot rows: {{.SpotRows}} | Futures rows: {{.FuturesRows}} | Disk free: {{.Free}}</p><p>Dataset: {{.Dataset}}</p><h2>12-hour Packages</h2><table><tr><th>ID</th><th>Range (+08:00)</th><th>Size</th><th>Downloaded</th><th>Action</th></tr>{{range .Packages}}<tr><td><code>{{.ID}}</code></td><td>{{.Start}} → {{.End}}</td><td>{{.Size}}</td><td>{{.Downloaded}}</td><td><a href="/download/{{.ID}}">Download TAR</a>{{if .Downloaded}}<form style="display:inline" method=post action="/purge/{{.ID}}"><input type=password name=password placeholder="password" required><button>Purge</button></form>{{end}}</td></tr>{{end}}</table><p><a href=/logout>Logout</a></p>`))
+var dashTpl = template.Must(template.New("dash").Parse(`<!doctype html><meta charset="utf-8"><title>MarketDepth</title><style>body{font-family:system-ui;max-width:1050px;margin:30px auto;padding:0 18px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left}button{padding:6px 10px}.ok{color:#087}.warn{color:#b60}code{font-size:14px}</style><h1>MarketDepth</h1><p>Schema: <code>{{.Schema}}</code></p><p>Uptime: {{.Uptime}} | Spot rows: {{.SpotRows}} | Disk free: {{.Free}}</p><p>Dataset: {{.Dataset}}</p><h2>12-hour Packages</h2><table><tr><th>ID</th><th>Range (+08:00)</th><th>Size</th><th>Downloaded</th><th>Action</th></tr>{{range .Packages}}<tr><td><code>{{.ID}}</code></td><td>{{.Start}} → {{.End}}</td><td>{{.Size}}</td><td>{{.Downloaded}}</td><td><a href="/download/{{.ID}}">Download TAR</a>{{if .Downloaded}}<form style="display:inline" method=post action="/purge/{{.ID}}"><input type=password name=password placeholder="password" required><button>Purge</button></form>{{end}}</td></tr>{{end}}</table><p><a href=/logout>Logout</a></p>`))
 
 type dashPkg struct {
 	ID, Start, End, Size string
@@ -114,7 +113,7 @@ type dashPkg struct {
 }
 type dashData struct {
 	Schema, Uptime, Free, Dataset string
-	SpotRows, FuturesRows         uint64
+	SpotRows                      uint64
 	Packages                      []dashPkg
 }
 
@@ -201,7 +200,7 @@ func StartServer(cfg Config, store *Store, rt *RuntimeStatus) *http.Server {
 		total, free, _, _ := store.Disk()
 		_ = total
 		ps := store.Packages()
-		d := dashData{Schema: SchemaVersion, Uptime: time.Since(time.UnixMilli(rt.StartedMs)).Round(time.Second).String(), Free: humanBytes(free), Dataset: "market-depth", SpotRows: rt.SpotRows.Load(), FuturesRows: rt.FuturesRows.Load()}
+		d := dashData{Schema: SchemaVersion, Uptime: time.Since(time.UnixMilli(rt.StartedMs)).Round(time.Second).String(), Free: humanBytes(free), Dataset: "market-depth", SpotRows: rt.SpotRows.Load()}
 		for _, p := range ps {
 			d.Packages = append(d.Packages, dashPkg{ID: p.ID, Start: formatTaipei(p.StartMs), End: formatTaipei(p.EndMs), Size: humanBytes(p.Bytes), Downloaded: p.Downloaded})
 		}

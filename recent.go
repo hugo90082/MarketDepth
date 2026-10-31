@@ -11,7 +11,7 @@ import (
 
 const (
 	recentBufferDuration time.Duration = 16 * time.Minute
-	recentStaleAfter     time.Duration = 60 * time.Second
+	recentStaleAfter     time.Duration = 120 * time.Second
 )
 
 type RecentBuffer struct {

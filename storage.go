@@ -78,7 +78,7 @@ func NewStore(cfg Config) (*Store, error) {
 		return nil, err
 	}
 	for _, d := range []string{
-		filepath.Join(cfg.DatasetDir, "chunks", "spot"), filepath.Join(cfg.DatasetDir, "chunks", "futures"), filepath.Join(cfg.DatasetDir, "chunks", "events"), filepath.Join(cfg.DatasetDir, "chunks", "audit"),
+		filepath.Join(cfg.DatasetDir, "chunks", "spot"), filepath.Join(cfg.DatasetDir, "chunks", "events"), filepath.Join(cfg.DatasetDir, "chunks", "audit"),
 		filepath.Join(cfg.DatasetDir, "history"), filepath.Join(cfg.DatasetDir, "packages", "ready"), filepath.Join(cfg.DatasetDir, "packages", "tombstones"), filepath.Join(cfg.DatasetDir, "meta"), filepath.Join(cfg.DatasetDir, "recovery"),
 	} {
 		if err := os.MkdirAll(d, 0755); err != nil {
@@ -97,6 +97,9 @@ func NewStore(cfg Config) (*Store, error) {
 
 func floorMs(t int64, d time.Duration) int64 { m := d.Milliseconds(); return (t / m) * m }
 func (s *Store) Add(kind string, ts int64, row any) error {
+	if kind != "spot" && kind != "events" {
+		return fmt.Errorf("unsupported collection kind %q", kind)
+	}
 	b, err := json.Marshal(row)
 	if err != nil {
 		return err
@@ -272,7 +275,7 @@ func (s *Store) loadRecovery() error {
 			continue
 		}
 		kind := base[:i]
-		if kind != "spot" && kind != "futures" && kind != "events" {
+		if kind != "spot" && kind != "events" {
 			continue
 		}
 		start, err := strconv.ParseInt(base[i+1:], 10, 64)
@@ -352,8 +355,6 @@ func schemaFor(kind string) string {
 	switch kind {
 	case "spot":
 		return SpotSchema
-	case "futures":
-		return FuturesSchema
 	default:
 		return EventSchema
 	}
@@ -696,7 +697,6 @@ func (s *Store) StreamPackage(id string, w io.Writer) error {
 		"chunkCounts": p.ChunkCounts,
 		"rowCounts": p.RowCounts,
 		"expectedSpotRows": durMs / s.cfg.SpotCadence.Milliseconds(),
-		"expectedFuturesRows": durMs / int64(time.Second/time.Millisecond),
 	}
 	auditBytes, _ := json.MarshalIndent(audit, "", "  ")
 	if err := tw.WriteHeader(&tar.Header{Name: "audit-summary.json", Mode: 0644, Size: int64(len(auditBytes)), ModTime: time.Now()}); err != nil {

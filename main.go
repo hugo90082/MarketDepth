@@ -16,12 +16,12 @@ import (
 
 func writeMeta(cfg Config) error {
 	m := map[string]any{
-		"schema": SchemaVersion, "spotSchema": SpotSchema, "futuresSchema": FuturesSchema, "eventSchema": EventSchema,
-		"venues": Venues, "assets": Assets, "zonesBps": Zones, "spotCadenceMs": cfg.SpotCadence.Milliseconds(), "futuresCadenceMs": cfg.FuturesCadence.Milliseconds(),
+		"schema": SchemaVersion, "spotSchema": SpotSchema, "eventSchema": EventSchema, "collection": "SPOT_ONLY",
+		"venues": Venues, "assets": Assets, "zonesBps": Zones, "spotCadenceMs": cfg.SpotCadence.Milliseconds(),
 		"timezone": "Asia/Taipei", "utcOffset": "+08:00", "historyAPI": "sealed immutable spot chunks + 16m recent window", "recentAPI": "/api/v1/recent/depth", "recentBufferMs": recentBufferDuration.Milliseconds(), "recentPollMinMs": int64(0), "apiRateLimitRequests": 2, "apiRateLimitWindowMs": int64(1000), "all4Stored": false,
 		"depthUnit": DepthUnit, "quoteToUSDPolicy": QuoteToUSDPolicy,
-		"spotAcquisition": "synchronized_30s_hybrid", "spotRequestLeadMs": spotRequestLead.Milliseconds(), "spotAcceptWindowMs": spotAcceptWindow.Milliseconds(),
-		"spotSources": map[string]string{"binance": "BTC/ETH production local book: REST5000 bootstrap + diff-depth 1000ms + U/u bridge; exact-T cut; sequence-valid diff levels extend observed book through stored 0-750 bps zones; adaptive edge-headroom refresh plus periodic 15m rebootstrap; SOL one REST5000 snapshot", "coinbase": "one full level2 REST snapshot per 30s row", "kraken": "exact WS depth=1000 plus BTC/ETH GroupedBook depth=1000 grouping=1000 filling only uncovered zone sides; REST500 failure fallback", "bitfinex": "P1 fixed source for 0-100 bps + P2 fixed source for 100-750 bps; P0 not requested"},
+		"spotAcquisition": "synchronized_60s_hybrid", "spotRequestLeadMs": spotRequestLead.Milliseconds(), "spotAcceptWindowMs": spotAcceptWindow.Milliseconds(),
+		"spotSources": map[string]string{"binance": "BTC/ETH production local book: REST5000 bootstrap + diff-depth 1000ms + U/u bridge; exact-T cut; sequence-valid diff levels extend observed book through stored 0-750 bps zones; adaptive edge-headroom refresh plus periodic 15m rebootstrap; SOL one REST5000 snapshot", "coinbase": "one full level2 REST snapshot per 60s row", "kraken": "exact WS depth=1000 plus BTC/ETH GroupedBook depth=1000 grouping=1000 filling only uncovered zone sides; REST500 failure fallback", "bitfinex": "P1 fixed source for 0-100 bps + P2 fixed source for 100-750 bps; P0 not requested"},
 		"binanceCoveragePolicy": "BTC/ETH stored zone values are emitted from the causally maintained observed local book built by REST5000 bootstrap plus sequence-valid diff-depth updates; REST5000 trusted bid/ask edges remain separate audit diagnostics and do not suppress observed 0-750 bps values; SOL uses REST snapshot coverage",
 		"missingSemantics": "coverage is independent per venue/asset/zone/side; confirmed empty=0; insufficient coverage or source failure=null; no fill/interpolation",
 	}
@@ -61,9 +61,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rt := &RuntimeStatus{StartedMs: time.Now().UnixMilli()}
-	// Read-only check of actual on-disk, sealed one-second Futures files.
-	// No package, API, or historical row mutation is performed.
-	auditSavedFuturesFiles(cfg.DatasetDir)
 	recent := NewRecentBuffer(recentBufferDuration)
 	if err := recent.RebuildFromStore(store, nowMs()); err != nil {
 		log.Printf("recent-buffer-rebuild warning=%v", err)
@@ -89,15 +86,10 @@ func main() {
 			s.SetCutoff(firstSpot.UnixMilli())
 		}
 	}
-	firstFuture := time.Now().Truncate(cfg.FuturesCadence).Add(cfg.FuturesCadence)
-	for _, s := range feeds.Futures {
-		s.SetCutoff(firstFuture.UnixMilli())
-	}
 	srv := StartServer(cfg, store, rt)
 	log.Printf("marketdepth-start schema=%s dataset=%s", SchemaVersion, cfg.DatasetDir)
 
 	go spotLoop(ctx, cfg, store, rt, spotSampler, emit, firstSpot)
-	go futuresLoop(ctx, cfg, store, rt, feeds, firstFuture)
 	go flushLoop(ctx, cfg, store, rt, emit)
 	go statusLoop(ctx, cfg, store, rt)
 
@@ -162,32 +154,8 @@ func spotLoop(ctx context.Context, cfg Config, store *Store, rt *RuntimeStatus, 
 	}
 }
 
-func futuresLoop(ctx context.Context, cfg Config, store *Store, rt *RuntimeStatus, feeds *Feeds, next time.Time) {
-	for {
-		if !sleepUntil(ctx, next.Add(cfg.FinalizeDelay)) {
-			return
-		}
-		t := next.UnixMilli()
-		nextTarget := next.Add(cfg.FuturesCadence).UnixMilli()
-		row := FuturesSnapshot{T: t, A: nowMs(), BTC: feeds.Futures["BTC"].AtAdvance(t, nextTarget), ETH: feeds.Futures["ETH"].AtAdvance(t, nextTarget), SOL: feeds.Futures["SOL"].AtAdvance(t, nextTarget)}
-		if t%60_000 == 0 {
-			log.Printf("futures-live-audit t=%d BTC=%v ETH=%v SOL=%v btcTradeMs=%d ethTradeMs=%d solTradeMs=%d", t,
-				row.BTC.P != nil && *row.BTC.P > 0, row.ETH.P != nil && *row.ETH.P > 0, row.SOL.P != nil && *row.SOL.P > 0,
-				row.BTC.X, row.ETH.X, row.SOL.X)
-		}
-		if err := store.Add("futures", t, row); err != nil {
-			if !errors.Is(err, ErrStorageStopped) {
-				rt.LastError.Store(err.Error())
-			}
-		} else {
-			rt.FuturesRows.Add(1)
-		}
-		next = next.Add(time.Second)
-	}
-}
-
 func flushLoop(ctx context.Context, cfg Config, store *Store, rt *RuntimeStatus, emit EventFn) {
-	tick := time.NewTicker(5 * time.Second)
+	tick := time.NewTicker(10 * time.Second)
 	defer tick.Stop()
 	nextCheckpoint := time.Now().Add(time.Minute)
 	for {
@@ -231,7 +199,7 @@ func statusLoop(ctx context.Context, cfg Config, store *Store, rt *RuntimeStatus
 			}
 			var ms runtime.MemStats
 			runtime.ReadMemStats(&ms)
-			log.Printf("marketdepth-status uptimeSec=%d spotRows=%d futuresRows=%d eventRows=%d diskTotal=%d diskUsed=%d diskFree=%d pressure=%s lastFlushMs=%d heapAllocBytes=%d heapInuseBytes=%d heapSysBytes=%d stackInuseBytes=%d numGC=%d lastError=%q", (nowMs()-rt.StartedMs)/1000, rt.SpotRows.Load(), rt.FuturesRows.Load(), rt.EventRows.Load(), total, used, free, pressure(cfg, free), store.LastFlush(), ms.HeapAlloc, ms.HeapInuse, ms.HeapSys, ms.StackInuse, ms.NumGC, errStr)
+			log.Printf("marketdepth-status uptimeSec=%d spotRows=%d eventRows=%d diskTotal=%d diskUsed=%d diskFree=%d pressure=%s lastFlushMs=%d heapAllocBytes=%d heapInuseBytes=%d heapSysBytes=%d stackInuseBytes=%d numGC=%d lastError=%q", (nowMs()-rt.StartedMs)/1000, rt.SpotRows.Load(), rt.EventRows.Load(), total, used, free, pressure(cfg, free), store.LastFlush(), ms.HeapAlloc, ms.HeapInuse, ms.HeapSys, ms.StackInuse, ms.NumGC, errStr)
 			if rt.Feeds != nil {
 				t := nowMs()
 				cov := map[string]CoverageAudit{}

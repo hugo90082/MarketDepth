@@ -2,14 +2,13 @@
 
 Multi-exchange market-depth collector for BTC, ETH and SOL.
 
-MarketDepth collects synchronized Spot depth snapshots from Binance, Coinbase, Kraken and Bitfinex, keeps 1-second Binance USDⓈ-M futures prices, stores immutable historical chunks, and exposes authenticated Historical + Recent APIs for a frontend/BFF.
+MarketDepth collects synchronized one-minute Spot depth snapshots from Binance, Coinbase, Kraken and Bitfinex, stores immutable historical chunks, and exposes authenticated Historical + Recent depth APIs for a frontend/BFF. No Futures prices are collected.
 
 ## Frozen Spot specification
 
 - Assets: `BTC`, `ETH`, `SOL`
 - Venues: `binance`, `coinbase`, `kraken`, `bitfinex`
-- Spot decision cadence: **30 seconds**
-- Futures cadence: **1 second**
+- Spot decision cadence: **60 seconds** (aligned to whole UTC minute)
 - Display timezone: **Asia/Taipei (+08:00)**
 - Stored depth zones:
   - `0 <= d < 100 bps`
@@ -61,12 +60,12 @@ Meaning:
 - Bid and Ask validity are independent.
 - A source failure affects only that venue/asset. It does not blank other venues/assets.
 - Missing values are never forward-filled, backfilled, interpolated, or converted to zero.
-- A scheduler miss still writes the 30-second target row as all-null so the time grid remains explicit.
+- A scheduler miss still writes the 60-second target row as all-null so the time grid remains explicit.
 
 ## Historical storage
 
 - Historical Spot chunks: **15 minutes**
-- Expected complete Spot rows per chunk: **30**
+- Expected complete Spot rows per chunk: **15**
 - Chunk format: immutable gzip JSONL
 - SHA256 + ETag supported
 - Open buffers have crash-safe recovery checkpoints
@@ -82,7 +81,7 @@ GET /api/v1/recent/depth
 GET /api/v1/recent/depth?since=<targetTsMs>
 ```
 
-Recent no longer has a dedicated 30-second cooldown.
+Recent has no per-poll cooldown (2 requests per rolling second shared across authenticated APIs).
 
 All authenticated data APIs now share a process-wide rolling rate limit:
 
@@ -113,13 +112,13 @@ The token is intended to remain server-side behind the frontend BFF; do not expo
 
 ## Spot acquisition
 
-The proven transport approach is retained while the decision cadence changes to 30 seconds:
+The proven transport approach is retained with a one-minute snapshot cadence:
 
 - Binance BTC/ETH: persistent production local book, REST5000 bootstrap + diff-depth WebSocket + sequence validation + exact-target causal cut. Sequence-valid diff updates extend and maintain the observed local book beyond the initial REST5000 edge, and the stored 0–750 bps zone values are calculated from that causally maintained observed book. REST5000 trusted bid/ask edges are retained separately as audit/quality diagnostics; they no longer suppress observed outer-zone values. Zero-quantity updates delete cancelled/removed levels. A normal rebootstrap refreshes the newly proven REST interval without discarding sequence-maintained outer observations; a true disconnect or sequence gap rebuilds from a clean snapshot.
 - Binance SOL: REST5000 snapshot.
 - Coinbase: full Level-2 REST snapshot.
 - Kraken: exact WebSocket depth=1000; BTC/ETH also use GroupedBook only to fill uncovered sides/zones; REST fallback remains.
-- Bitfinex: P1 is the fixed source for 0–100 bps and P2 is the fixed source for 100–750 bps. P0 is not requested. This keeps the near-zone precision regime constant across rows while preserving the existing outer-zone P2 regime. The stored schema and zone boundaries do not change. This fixed P1/P2 mapping is the production acquisition policy.
+- Bitfinex: P1 is the fixed source for 0–100 bps and P2 is the fixed source for 100–750 bps. P0 is not requested. This keeps the near-zone precision regime constant across rows while preserving the existing outer-zone P2 regime. The depth data shape and zone boundaries do not change. This fixed P1/P2 mapping is the production acquisition policy.
 
 No future data are used for a target row.
 
@@ -169,23 +168,23 @@ go test ./...
 before producing the runtime binary.
 
 
-## USD-notional dataset migration
+## One-time Spot-only 60-second dataset migration
 
 The USD-notional format is intentionally incompatible with the previous base-quantity dataset.
 
 On the first startup with:
 
 ```text
-DatasetFormat = MARKET_DEPTH_USD_NOTIONAL_TRUSTED_COVERAGE_V2
+DatasetFormat = MARKET_DEPTH_SPOT_ONLY_60S_5ZONE_USD_V3
 ```
 
-MarketDepth deletes the legacy dataset under `DATASET_DIR`, writes a format marker, and starts a clean dataset. Subsequent restarts with the same marker preserve the new data.
+With the user's explicit approval and an existing external backup, the first deployment of this version deletes ALL previous data under `DATASET_DIR` (including old Spot, Futures, manifests and history indexes), writes a new format marker, and starts a clean Spot-only dataset. Repeated restarts with the same marker preserve the new data. Do not deploy this migration if backups are not verified.
 
 Current schemas:
 
 ```text
-MARKET_DEPTH_COLLECTION_30S_5ZONE_USD_3
-MD-SPOT-30S-USD-3
+MARKET_DEPTH_COLLECTION_60S_5ZONE_USD_1
+MD-SPOT-60S-USD-1
 MD-HISTORY-INDEX-3
 MD-PACKAGE-3
 ```
@@ -236,3 +235,16 @@ numGC
 ```
 
 This policy does not change the Spot schema or Historical row shape. It changes Binance BTC/ETH outer-zone emission semantics so sequence-maintained observed depth can be stored through 750 bps while trusted REST coverage remains available as a separate audit signal.
+
+## Spot-only storage and resources (2026-10-31)
+
+- A complete 60-second target row covers all 4 Spot venues, 3 assets and 5 depth zones.
+- Each sealed 15-minute Spot chunk has 15 expected rows. Twelve-hour download packages contain Spot + event/audit files; the integrity summary has no `expectedFuturesRows` field.
+- Futures trade WebSocket, Futures one-second sampler, Futures memory states and new Futures disk writes are removed.
+- Existing Railway data (previously backed up by its owner) is intentionally reset once using the V3 dataset marker. Repeated restarts preserve the new dataset. External backups are unaffected.
+- Authenticated API routes and depth JSON layout are unchanged. `meta.cadenceMs` is now 60000 and Spot schema is `MD-SPOT-60S-USD-1`. Sites/frontends must handle the new cadence and schema.
+- In-memory Recent remains 16 minutes; stale threshold is 120 seconds.
+- Binance BTC/ETH persistent Spot diff-depth WebSocket is intentionally retained at its existing rate for exact-time 0–750 bps coverage; it is NOT the discontinued Futures stream.
+- Flush loop checks closed chunks every 10 seconds instead of 5 seconds, with one-minute open recovery checkpoints preserved.
+- Existing API tokens, management passwords, Railway volume size and Free plan CPU/RAM limits remain unchanged.
+

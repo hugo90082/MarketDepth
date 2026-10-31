@@ -19,7 +19,6 @@ type EventFn func(EventRecord)
 
 type Feeds struct {
 	Sources map[string]*SourceState
-	Futures map[string]*FutureState
 	cancel  context.CancelFunc
 }
 
@@ -31,15 +30,13 @@ func StartFeeds(parent context.Context, emit EventFn) *Feeds {
 		sourceKey("binance", "BTC"): NewSource("binance", "BTC", "BTCUSDT"),
 		sourceKey("binance", "ETH"): NewSource("binance", "ETH", "ETHUSDT"),
 	}
-	fut := map[string]*FutureState{"BTC": {}, "ETH": {}, "SOL": {}}
-	f := &Feeds{Sources: src, Futures: fut, cancel: cancel}
+	f := &Feeds{Sources: src, cancel: cancel}
 
 	// Only Binance BTC/ETH require a persistent local book. All other Spot
 	// sources are sampled by the unified 30-second SpotSampler path.
 	for _, a := range []string{"BTC", "ETH"} {
 		go runBinance(ctx, a, src[sourceKey("binance", a)], emit)
 	}
-	go runBinanceFutures(ctx, fut, emit)
 	return f
 }
 
@@ -482,69 +479,6 @@ func runBinance(ctx context.Context, asset string, s *SourceState, emit EventFn)
 				log.Printf("binance-%s rebootstrap_ok reason=%s bidBps=%.2f askBps=%.2f bidFloor=%.2f askFloor=%.2f", asset, reason, fresh.initialBidBps, fresh.initialAskBps, bidFloor, askFloor)
 			}
 		}
-	}
-}
-
-// ---------- Binance Futures ----------
-
-func runBinanceFutures(ctx context.Context, f map[string]*FutureState, emit EventFn) {
-	streams := []string{"btcusdt@aggTrade", "ethusdt@aggTrade", "solusdt@aggTrade"}
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		c, _, err := websocket.DefaultDialer.DialContext(ctx, "wss://fstream.binance.com/market/stream?streams="+strings.Join(streams, "/"), nil)
-		if err != nil {
-			log.Printf("binance-futures websocket_dial_failed err=%v", err)
-			sleepCtx(ctx, 5*time.Second)
-			continue
-		}
-		log.Printf("binance-futures websocket_connected streams=BTC,ETH,SOL endpoint=/market/stream")
-		// Binance USDⓈ-M trades are active nearly continuously. Reconnect if
-		// a successful TCP/WebSocket upgrade yields no valid stream traffic.
-		_ = c.SetReadDeadline(time.Now().Add(20 * time.Second))
-		for {
-			_, b, e := c.ReadMessage()
-			if e != nil {
-				c.Close()
-				log.Printf("binance-futures websocket_disconnected err=%v", e)
-				emit(EventRecord{T: nowMs(), Venue: "binance_futures", Asset: "ALL", Type: "disconnect", Reason: e.Error()})
-				break
-			}
-			recv := nowMs()
-			_ = c.SetReadDeadline(time.Now().Add(20 * time.Second))
-			var m struct {
-				Data struct {
-					Symbol  string `json:"s"`
-					Price   string `json:"p"`
-					TradeMs int64  `json:"T"`
-					Market  int    `json:"st"`
-				} `json:"data"`
-			}
-			if json.Unmarshal(b, &m) != nil {
-				continue
-			}
-			asset := ""
-			switch m.Data.Symbol {
-			case "BTCUSDT":
-				asset = "BTC"
-			case "ETHUSDT":
-				asset = "ETH"
-			case "SOLUSDT":
-				asset = "SOL"
-			}
-			if asset == "" || m.Data.Market != 1 {
-				// Post-2026 Binance merged futures streams include st=1 for
-				// USDⓈ-M and st=2 for COIN-M. Never mix these markets.
-				continue
-			}
-			p, priceErr := strconv.ParseFloat(m.Data.Price, 64)
-			if priceErr != nil || p <= 0 || m.Data.TradeMs <= 0 {
-				continue
-			}
-			f[asset].Add(TradeEvent{RecvMs: recv, ExchangeMs: m.Data.TradeMs, Price: p})
-		}
-		sleepCtx(ctx, time.Second)
 	}
 }
 

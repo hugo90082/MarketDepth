@@ -584,10 +584,10 @@ func TestMergePreferExactOnlyFillsNullSides(t *testing.T) {
 
 
 
-func TestThirtySecondSpotCadence(t *testing.T) {
+func TestOneMinuteSpotCadence(t *testing.T) {
 	cfg := LoadConfig()
-	if cfg.SpotCadence != 30*time.Second {
-		t.Fatalf("spot cadence=%v want=30s", cfg.SpotCadence)
+	if cfg.SpotCadence != 60*time.Second {
+		t.Fatalf("spot cadence=%v want=60s", cfg.SpotCadence)
 	}
 	if cfg.ChunkDuration != 15*time.Minute {
 		t.Fatalf("chunk duration=%v want=15m", cfg.ChunkDuration)
@@ -664,5 +664,26 @@ func TestHistoryIndexVersionRejectsShift(t *testing.T) {
 	}
 	if v2 == v1 {
 		t.Fatalf("index version must change after index mutation: %d", v2)
+	}
+}
+
+// Spot-only V3 format migration intentionally clears previously backed-up
+// historical Spot/Futures files exactly once, then preserves new content.
+func TestSpot60MigrationRemovesOldPriceAndPreservesNewData(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "dataset")
+	if err := os.MkdirAll(filepath.Join(dir, "chunks", "futures"), 0755); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(filepath.Join(dir, ".marketdepth-format"), []byte("MARKET_DEPTH_USD_NOTIONAL_TRUSTED_COVERAGE_V2\n"), 0644); err != nil { t.Fatal(err) }
+	legacy := filepath.Join(dir, "chunks", "futures", "previous.jsonl.gz")
+	if err := os.WriteFile(legacy, []byte("backed-up-prior-data"), 0644); err != nil { t.Fatal(err) }
+	cfg := LoadConfig()
+	cfg.DatasetDir = dir
+	if _, err := NewStore(cfg); err != nil { t.Fatal(err) }
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) { t.Fatalf("old backed-up price file must be removed: %v", err) }
+	keep := filepath.Join(dir, "meta", "new-spot.txt")
+	if err := os.WriteFile(keep, []byte("new"), 0644); err != nil { t.Fatal(err) }
+	if _, err := NewStore(cfg); err != nil { t.Fatal(err) }
+	if _, err := os.Stat(keep); err != nil { t.Fatalf("second startup must preserve new data: %v", err) }
+	if err := (&Store{}).Add("futures", 1, map[string]string{"bad":"old"}); err == nil {
+		t.Fatal("Futures writes must be rejected")
 	}
 }

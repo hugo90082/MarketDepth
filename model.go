@@ -12,18 +12,6 @@ type SpotSnapshot struct {
 	D [][][]CompactPair `json:"d"`
 }
 
-type FuturesAsset struct {
-	P *float64 `json:"p"`
-	X int64    `json:"x,omitempty"`
-}
-type FuturesSnapshot struct {
-	T   int64        `json:"t"`
-	A   int64        `json:"a"`
-	BTC FuturesAsset `json:"BTC"`
-	ETH FuturesAsset `json:"ETH"`
-	SOL FuturesAsset `json:"SOL"`
-}
-
 type EventRecord struct {
 	T         int64  `json:"t"`
 	Venue     string `json:"venue"`

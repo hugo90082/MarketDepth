@@ -8,18 +8,18 @@ import (
 
 func TestRecentBufferKeepsSixteenMinutes(t *testing.T) {
 	b := NewRecentBuffer(16 * time.Minute)
-	for i := 0; i < 33; i++ {
-		b.Add(SpotSnapshot{T: int64(i) * 30_000})
+	for i := 0; i < 18; i++ {
+		b.Add(SpotSnapshot{T: int64(i) * 60_000})
 	}
 	rows, oldest, latest := b.RowsSince(0)
-	if len(rows) != 32 {
-		t.Fatalf("recent rows=%d want=32", len(rows))
+	if len(rows) != 16 {
+		t.Fatalf("recent rows=%d want=16", len(rows))
 	}
-	if oldest != 30_000 || latest != 960_000 {
+	if oldest != 120_000 || latest != 1_020_000 {
 		t.Fatalf("oldest=%d latest=%d", oldest, latest)
 	}
-	inc, _, _ := b.RowsSince(latest - 60_000)
-	if len(inc) != 2 || inc[0].T != latest-30_000 || inc[1].T != latest {
+	inc, _, _ := b.RowsSince(latest - 120_000)
+	if len(inc) != 2 || inc[0].T != latest-60_000 || inc[1].T != latest {
 		t.Fatalf("incremental rows=%#v", inc)
 	}
 }
